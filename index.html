@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>古代航海</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: monospace;
+        }
+        canvas {
+            display: none;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #hud {
+            display: none;
+            position: fixed;
+            bottom: 16px;
+            color: #665;
+            font-size: 11px;
+            text-align: center;
+        }
+        #loading {
+            color: #555;
+            font-size: 14px;
+            text-align: center;
+            line-height: 2;
+        }
+    </style>
+</head>
+<body>
+<div id="loading">지형 데이터 로딩 중...</div>
+<canvas id="c"></canvas>
+<div id="hud">W·S 전진/후진 │ A·D 회전 │ Q·E 시선</div>
+
+<script>
+(async function() {
+    // --- Config ---
+    var SCR_W = 400, SCR_H = 300, PX_SCALE = 3;
+    var SHIFT = 10;
+    var SIZE  = 1 << SHIFT;   // 1024
+    var MASK  = SIZE - 1;     // 1023
+    var SEA = 64;             // 해수면 (0m = 출력값 64)
+
+    // --- Canvas ---
+    var canvas = document.getElementById('c');
+    var ctx = canvas.getContext('2d');
+    canvas.width = SCR_W;
+    canvas.height = SCR_H;
+    canvas.style.width  = SCR_W * PX_SCALE + 'px';
+    canvas.style.height = SCR_H * PX_SCALE + 'px';
+
+    // --- Double buffer (same pattern as s-macke/VoxelSpace) ---
+    var imagedata = ctx.createImageData(SCR_W, SCR_H);
+    var bufarray  = new ArrayBuffer(SCR_W * SCR_H * 4);
+    var buf8      = new Uint8Array(bufarray);
+    var buf32     = new Uint32Array(bufarray);
+
+    // Fog target: 바다 → 하늘색, 육지 → 어두운 회색 (실제 대기 원근감)
+    var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
+    var FOG_LAND_R = 90,  FOG_LAND_G = 100, FOG_LAND_B = 120;
+
+    // Precompute sky gradient row colors
+    var skyRow = new Uint32Array(SCR_H);
+    for (var sy = 0; sy < SCR_H; sy++) {
+        var t = sy / SCR_H;
+        var sr = 60 + 100 * t | 0;
+        var sg = 90 + 95  * t | 0;
+        var sb = 170 + 40 * t | 0;
+        skyRow[sy] = 0xFF000000 | (sb << 16) | (sg << 8) | sr;
+    }
+
+    // --- 구간별 선형 매핑 (piecewise linear) ---
+    // Uint8 값 → 실제 미터 역변환 LUT (렌더링 시 구간별 scale 보정)
+    var SEGMENTS = [
+        [-8000, -200,   0,  24],
+        [ -200,  -10,  24,  48],
+        [  -10,    0,  48,  64],
+        [    0,   20,  64, 112],
+        [   20,  200, 112, 160],
+        [  200, 1000, 160, 208],
+        [ 1000, 5000, 208, 255]
+    ];
+    var heightMeters = new Float32Array(256);
+    for (var i = 0; i < 256; i++) {
+        for (var s = 0; s < SEGMENTS.length; s++) {
+            var seg = SEGMENTS[s];
+            if (i <= seg[3] || s === SEGMENTS.length - 1) {
+                var t = (seg[3] === seg[2]) ? 0 : (i - seg[2]) / (seg[3] - seg[2]);
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                heightMeters[i] = seg[0] + t * (seg[1] - seg[0]);
+                break;
+            }
+        }
+    }
+
+    // --- Load PNG heightmap & colormap ---
+    function loadImage(src) {
+        return new Promise(function(resolve, reject) {
+            var img = new Image();
+            img.onload = function() { resolve(img); };
+            img.onerror = reject;
+            img.src = src;
+        });
+    }
+
+    var altitude, colormap;
+    try {
+        var imgs = await Promise.all([
+            loadImage('jeju_hires_1024.png'),
+            loadImage('jeju_colormap_1024.png'),
+            loadImage('boat.png')
+        ]);
+        var boatImg = imgs[2];
+
+        // heightmap → altitude (grayscale)
+        var tmpC = document.createElement('canvas');
+        tmpC.width = SIZE; tmpC.height = SIZE;
+        var tmpCtx = tmpC.getContext('2d');
+
+        tmpCtx.drawImage(imgs[0], 0, 0);
+        var hData = tmpCtx.getImageData(0, 0, SIZE, SIZE).data;
+
+        altitude = new Uint8Array(SIZE * SIZE);
+        for (var idx = 0; idx < altitude.length; idx++) {
+            var h = hData[idx * 4]; // R channel = grayscale
+            altitude[idx] = h <= SEA ? SEA : h;
+        }
+
+        // colormap → Uint32 (ABGR)
+        tmpCtx.drawImage(imgs[1], 0, 0);
+        var cData = tmpCtx.getImageData(0, 0, SIZE, SIZE).data;
+
+        colormap = new Uint32Array(SIZE * SIZE);
+        for (var idx = 0; idx < colormap.length; idx++) {
+            var off = idx * 4;
+            colormap[idx] = 0xFF000000 | (cData[off+2] << 16) | (cData[off+1] << 8) | cData[off];
+        }
+    } catch (e) {
+        document.getElementById('loading').innerHTML =
+            '로드 실패<br><br><small>터미널에서:<br>' +
+            '<b>cd ~/works/tamra && python3 -m http.server 8080</b><br>' +
+            '→ http://localhost:8080 접속</small>';
+        return;
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    canvas.style.display = 'block';
+    document.getElementById('hud').style.display = 'block';
+
+    // --- Wave (파도) ---
+    var wave = {
+        time: 0,
+        // 큰 너울
+        swell:  { dx: 0.10, dy: 0.08, speed: 1.0, amp: 2.5 },
+        // 중간 파도
+        mid:    { dx: 0.25, dy:-0.18, speed: 1.5, amp: 1.2 },
+        // 잔물결
+        ripple: { dx: 0.60, dy: 0.45, speed: 2.3, amp: 0.4 }
+    };
+
+    // --- Boat (플레이어 조종 대상) ---
+    var boat = { x: 512.0, y: 700.0, angle: 0.0 };
+
+    // --- Camera (3인칭: 배 뒤에서 추적) ---
+    var CAM_DIST = 15;       // 배 뒤쪽 거리 (map units)
+    var CAM_HEIGHT = SEA + 60; // 카메라 높이 (높을수록 지형 벽 감소)
+    var camera = {
+        x: 512.0, y: 700.0,
+        height: CAM_HEIGHT,
+        angle: 0.0,
+        horizon: 100,
+        distance: 800
+    };
+
+    // --- Input ---
+    var input = {
+        forwardbackward: 0,
+        leftright: 0,
+        lookup: false,
+        lookdown: false
+    };
+
+    var time = new Date().getTime();
+
+    // --- Key handlers (reference style: store state, process in UpdateCamera) ---
+    document.onkeydown = function(e) {
+        switch (e.keyCode) {
+            case 87: case 38: input.forwardbackward =  3; break; // W, Up
+            case 83: case 40: input.forwardbackward = -3; break; // S, Down
+            case 65: case 37: input.leftright =  1; break;       // A, Left
+            case 68: case 39: input.leftright = -1; break;       // D, Right
+            case 81: input.lookup   = true; break;               // Q
+            case 69: input.lookdown = true; break;               // E
+        }
+        e.preventDefault();
+        return false;
+    };
+
+    document.onkeyup = function(e) {
+        switch (e.keyCode) {
+            case 87: case 38: case 83: case 40: input.forwardbackward = 0; break;
+            case 65: case 37: case 68: case 39: input.leftright = 0; break;
+            // R/F 제거 (배는 해수면 고정)
+            case 81: input.lookup   = false; break;
+            case 69: input.lookdown = false; break;
+        }
+        return false;
+    };
+
+    // --- DrawVerticalLine (exact reference implementation) ---
+    function DrawVerticalLine(x, ytop, ybottom, col) {
+        x = x | 0;
+        ytop = ytop | 0;
+        ybottom = ybottom | 0;
+        col = col | 0;
+        if (ytop < 0) ytop = 0;
+        if (ytop > ybottom) return;
+        var offset = ((ytop * SCR_W) + x) | 0;
+        for (var k = ytop | 0; k < ybottom | 0; k = k + 1 | 0) {
+            buf32[offset | 0] = col | 0;
+            offset = offset + SCR_W | 0;
+        }
+    }
+
+    // --- DrawBackground ---
+    function DrawBackground() {
+        for (var y = 0; y < SCR_H; y++) {
+            var c = skyRow[y];
+            var base = y * SCR_W;
+            for (var x = 0; x < SCR_W; x++) {
+                buf32[base + x] = c;
+            }
+        }
+    }
+
+    // --- Render (exact reference algorithm + fog) ---
+    function Render() {
+        var sinang = Math.sin(camera.angle);
+        var cosang = Math.cos(camera.angle);
+
+        var HORIZON_Y = camera.horizon + 5 | 0; // 수평선 약간 아래
+        var hiddeny = new Int32Array(SCR_W);
+        for (var i = 0; i < SCR_W | 0; i = i + 1 | 0)
+            hiddeny[i] = HORIZON_Y;  // 수평선 아래는 렌더링하지 않음
+
+        var deltaz = 1.0;
+        var distSq = camera.distance * camera.distance;
+        var camH = camera.height < 256 ? camera.height : 255;
+        var camMeters = heightMeters[camH];
+
+        for (var z = 1; z < camera.distance; z += deltaz) {
+            // 90 degree field of view
+            var plx =  -cosang * z - sinang * z;
+            var ply =   sinang * z - cosang * z;
+            var prx =   cosang * z - sinang * z;
+            var pry =  -sinang * z - cosang * z;
+
+            var dx = (prx - plx) / SCR_W;
+            var dy = (pry - ply) / SCR_W;
+            plx += camera.x;
+            ply += camera.y;
+            // 미터 기반 투영. scale 0.44=1:1, 0.8≈1.8x 과장
+            var projScale = 1.32 / z;
+
+            // Fog: 사진처럼 먼 곳일수록 짙은 대기 안개
+            var fog = Math.pow(z / camera.distance, 1.2);
+            var mf = 1.0 - fog;
+
+            for (var i = 0; i < SCR_W | 0; i = i + 1 | 0) {
+                var mapoffset = ((Math.floor(ply) & MASK) << SHIFT) + (Math.floor(plx) & MASK) | 0;
+                var isSea = altitude[mapoffset] <= SEA;
+
+                // 카메라~배 사이의 육지 스킵 (등 뒤 산이 화면을 가리는 것 방지)
+                if (!isSea && z < CAM_DIST) {
+                    plx += dx; ply += dy;
+                    continue;
+                }
+
+                // 미터 단위로 변환 후 투영 (구간별 scale 차이 자동 보정)
+                var terMeters = heightMeters[altitude[mapoffset]];
+
+                // 파도: 바다 픽셀에 높이 + 색상 변조
+                var waveVal = 0;
+                if (isSea) {
+                    var wx = plx, wy = ply, wt = wave.time;
+                    waveVal = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
+                            + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
+                            + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
+                    terMeters += waveVal * 0.3;  // 수면 높이 출렁임 (미터)
+                }
+
+                var heightonscreen = (camMeters - terMeters) * projScale + camera.horizon | 0;
+
+                // 색상
+                var c = colormap[mapoffset];
+
+                // 파도 색상 변조: 밝은 부분(마루)과 어두운 부분(골)
+                if (isSea && z < camera.distance * 0.7) {
+                    var wc = waveVal * 3 | 0;
+                    var cr0 = (c & 0xFF) + wc;
+                    var cg0 = ((c >> 8) & 0xFF) + wc;
+                    var cb0 = ((c >> 16) & 0xFF) + (wc >> 1);
+                    cr0 = cr0 < 0 ? 0 : cr0 > 255 ? 255 : cr0;
+                    cg0 = cg0 < 0 ? 0 : cg0 > 255 ? 255 : cg0;
+                    cb0 = cb0 < 0 ? 0 : cb0 > 255 ? 255 : cb0;
+                    c = 0xFF000000 | (cb0 << 16) | (cg0 << 8) | cr0;
+                }
+
+                // Apply fog: 육지는 어두운 실루엣, 바다는 하늘색으로
+                if (fog > 0.05) {
+                    var fR = isSea ? FOG_SEA_R : FOG_LAND_R;
+                    var fG = isSea ? FOG_SEA_G : FOG_LAND_G;
+                    var fB = isSea ? FOG_SEA_B : FOG_LAND_B;
+                    var cr = (c & 0xFF) * mf + fR * fog | 0;
+                    var cg = ((c >> 8) & 0xFF) * mf + fG * fog | 0;
+                    var cb = ((c >> 16) & 0xFF) * mf + fB * fog | 0;
+                    c = 0xFF000000 | (cb << 16) | (cg << 8) | cr;
+                }
+
+                DrawVerticalLine(i, heightonscreen | 0, hiddeny[i], c);
+                if (heightonscreen < hiddeny[i]) hiddeny[i] = heightonscreen;
+                plx += dx;
+                ply += dy;
+            }
+            deltaz += 0.005;
+        }
+    }
+
+    // --- Flip (copy backbuffer to canvas) ---
+    function Flip() {
+        imagedata.data.set(buf8);
+        ctx.putImageData(imagedata, 0, 0);
+    }
+
+    // --- UpdateCamera (배 조종 → 카메라 추적) ---
+    function UpdateCamera() {
+        var current = new Date().getTime();
+        var dt = (current - time) * 0.03;
+
+        // 입력 → 배 이동
+        if (input.forwardbackward !== 0) {
+            var nx = boat.x - input.forwardbackward * Math.sin(boat.angle) * dt;
+            var ny = boat.y - input.forwardbackward * Math.cos(boat.angle) * dt;
+            var noff = ((Math.floor(ny) & MASK) << SHIFT) + (Math.floor(nx) & MASK) | 0;
+            if (altitude[noff] <= SEA) {
+                boat.x = nx;
+                boat.y = ny;
+            }
+        }
+        if (input.leftright !== 0) {
+            boat.angle += input.leftright * 0.1 * dt;
+        }
+        if (input.lookup)   camera.horizon += 2 * dt;
+        if (input.lookdown)  camera.horizon -= 2 * dt;
+
+        // 카메라: 배 뒤쪽에서 추적
+        camera.x = boat.x + CAM_DIST * Math.sin(boat.angle);
+        camera.y = boat.y + CAM_DIST * Math.cos(boat.angle);
+        camera.angle = boat.angle;
+        camera.height = CAM_HEIGHT;
+
+        time = current;
+    }
+
+    // --- FillSea (수평선 아래 가짜 바다 — 월드 좌표 투영) ---
+    function FillSea() {
+        var startY = camera.horizon + 3 | 0;
+        var wt = wave.time;
+        var sinang = Math.sin(camera.angle);
+        var cosang = Math.cos(camera.angle);
+        var camH = camera.height < 256 ? camera.height : 255;
+        var camMeters = heightMeters[camH];
+
+        for (var y = startY; y < SCR_H; y++) {
+            var base = y * SCR_W;
+            var dy = y - camera.horizon;
+            if (dy < 1) dy = 1;
+            // 화면 Y → 거리 역산 (VoxelSpace 투영의 역)
+            var z = camMeters * 0.8 / dy;
+
+            // 같은 투영으로 월드 좌표 계산 (Render와 동일)
+            var plx = -cosang * z - sinang * z + camera.x;
+            var ply =  sinang * z - cosang * z + camera.y;
+            var prx =  cosang * z - sinang * z + camera.x;
+            var pry = -sinang * z - cosang * z + camera.y;
+            var ddx = (prx - plx) / SCR_W;
+            var ddy = (pry - ply) / SCR_W;
+
+            // 거리 기반 fog (Render와 동일)
+            var fog = Math.pow(z / camera.distance, 1.2);
+            if (fog > 1) fog = 1;
+            var mf = 1 - fog;
+
+            var wx = plx, wy = ply;
+            for (var x = 0; x < SCR_W; x++) {
+                // 월드 좌표 기반 파도 (Render의 파도와 동일한 파라미터)
+                var wv = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
+                       + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
+                       + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
+
+                var wc = wv * 3 | 0;
+                var r = 25 + wc, g = 55 + wc, b = 120 + (wc >> 1);
+
+                // fog 적용
+                r = r * mf + FOG_SEA_R * fog | 0;
+                g = g * mf + FOG_SEA_G * fog | 0;
+                b = b * mf + FOG_SEA_B * fog | 0;
+                r = r < 0 ? 0 : r > 255 ? 255 : r;
+                g = g < 0 ? 0 : g > 255 ? 255 : g;
+                b = b < 0 ? 0 : b > 255 ? 255 : b;
+                buf32[base + x] = 0xFF000000 | (b << 16) | (g << 8) | r;
+
+                wx += ddx;
+                wy += ddy;
+            }
+        }
+    }
+
+    // --- DrawBoat (boat.png 스프라이트) ---
+    function DrawBoat() {
+        // 파도 흔들림
+        var wt = wave.time;
+        var bob = Math.sin(boat.x * wave.swell.dx + boat.y * wave.swell.dy + wt * wave.swell.speed) * 1.5;
+
+        // Flip: buf → canvas 후 이미지를 ctx 위에 직접 그리기
+        imagedata.data.set(buf8);
+        ctx.putImageData(imagedata, 0, 0);
+
+        // 배 위치: 화면 정중앙
+        var sx = (SCR_W - boatImg.width) / 2 | 0;
+        var sy = (SCR_H - boatImg.height) / 2 + bob | 0;
+        ctx.drawImage(boatImg, sx, sy);
+    }
+
+    // --- Main Draw loop (상시 렌더링: 파도 애니메이션) ---
+    var updaterunning = false;
+
+    function Draw() {
+        updaterunning = true;
+        UpdateCamera();
+        wave.time += 0.04;
+        DrawBackground();
+        Render();      // 수평선 위: 진짜 VoxelSpace
+        FillSea();     // 수평선 아래: 가짜 바다
+        DrawBoat();
+        window.requestAnimationFrame(Draw);
+    }
+
+    // Initial render
+    Draw();
+})();
+</script>
+</body>
+</html>

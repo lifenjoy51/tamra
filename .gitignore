@@ -1,0 +1,5 @@
+# 대용량 바이너리
+*.raw
+tiles/
+ref_C10W.png
+__pycache__/
