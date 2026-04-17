@@ -545,48 +545,62 @@
             var mf = 1.0 - fog;
 
             for (var i = 0; i < SCR_W | 0; i = i + 1 | 0) {
-                var mapoffset = ((Math.floor(ply) & MASK) << SHIFT) + (Math.floor(plx) & MASK) | 0;
-                var isSea = altitude[mapoffset] <= SEA;
+                // --- 4 이웃 인덱스 + bilinear weights ---
+                var px_i = Math.floor(plx), py_i = Math.floor(ply);
+                var fpx = plx - px_i, fpy = ply - py_i;
+                var ix0 = px_i & MASK, iy0 = py_i & MASK;
+                var ix1 = (ix0 + 1) & MASK, iy1 = (iy0 + 1) & MASK;
+                var off00 = (iy0 << SHIFT) + ix0 | 0;
+                var off10 = (iy0 << SHIFT) + ix1 | 0;
+                var off01 = (iy1 << SHIFT) + ix0 | 0;
+                var off11 = (iy1 << SHIFT) + ix1 | 0;
 
-                // 미터 단위로 변환 후 투영 (구간별 scale 차이 자동 보정)
-                var terMeters = heightMeters[altitude[mapoffset]];
+                var a00 = altitude[off00], a10 = altitude[off10];
+                var a01 = altitude[off01], a11 = altitude[off11];
+                var allSea = (a00 <= SEA) & (a10 <= SEA) & (a01 <= SEA) & (a11 <= SEA);
+                var isSea = allSea !== 0;
 
-                // 파도: 바다 픽셀에 높이 + 색상 변조
-                var waveVal = 0;
-                if (isSea) {
-                    var wx = plx, wy = ply, wt = wave.time;
-                    waveVal = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
-                            + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
-                            + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
-                    terMeters += waveVal * 0.3;  // 수면 높이 출렁임 (미터)
-                }
+                var w00 = (1 - fpx) * (1 - fpy);
+                var w10 = fpx * (1 - fpy);
+                var w01 = (1 - fpx) * fpy;
+                var w11 = fpx * fpy;
 
+                // 높이(meters) bilinear — occlusion 판정에 필요하므로 선행
+                var terMeters = heightMeters[a00] * w00 + heightMeters[a10] * w10
+                              + heightMeters[a01] * w01 + heightMeters[a11] * w11;
+
+                // 파도는 occlusion 체크 이후에만 필요 (wave amp 작아 skip 판정 영향 무시)
                 var heightonscreen = (camMeters - terMeters) * projScale + camera.horizon | 0;
-
-                // 표준 Voxel Space occlusion: 지금까지 그린 것보다 위(작은 y)일 때만 그림
-                // 바다는 가까운(z작은) 샘플이 화면 아래쪽을 먼저 채우고,
-                // 점점 hiddeny가 수평선 쪽으로 올라가며, 저지대 육지는 바다 벽보다
-                // 위로 튀어나올 때만 보임 (자연스러운 shoreline)
                 if (heightonscreen >= hiddeny[i]) {
                     plx += dx;
                     ply += dy;
                     continue;
                 }
 
-                // 색상
-                var c = colormap[mapoffset];
+                // --- 드로우 확정: 색상 bilinear + 파도 변조 ---
+                var c00 = colormap[off00], c10v = colormap[off10];
+                var c01v = colormap[off01], c11v = colormap[off11];
+                var cR = (c00 & 0xFF) * w00 + (c10v & 0xFF) * w10
+                       + (c01v & 0xFF) * w01 + (c11v & 0xFF) * w11;
+                var cG = ((c00 >> 8) & 0xFF) * w00 + ((c10v >> 8) & 0xFF) * w10
+                       + ((c01v >> 8) & 0xFF) * w01 + ((c11v >> 8) & 0xFF) * w11;
+                var cB = ((c00 >> 16) & 0xFF) * w00 + ((c10v >> 16) & 0xFF) * w10
+                       + ((c01v >> 16) & 0xFF) * w01 + ((c11v >> 16) & 0xFF) * w11;
 
-                // 파도 색상 변조: 밝은 부분(마루)과 어두운 부분(골)
+                // 파도 색상 변조: 순수 바다 근거리만
                 if (isSea && z < camera.distance * 0.7) {
-                    var wc = waveVal * 7 | 0;
-                    var cr0 = (c & 0xFF) + wc;
-                    var cg0 = ((c >> 8) & 0xFF) + wc;
-                    var cb0 = ((c >> 16) & 0xFF) + (wc >> 1);
-                    cr0 = cr0 < 0 ? 0 : cr0 > 255 ? 255 : cr0;
-                    cg0 = cg0 < 0 ? 0 : cg0 > 255 ? 255 : cg0;
-                    cb0 = cb0 < 0 ? 0 : cb0 > 255 ? 255 : cb0;
-                    c = 0xFF000000 | (cb0 << 16) | (cg0 << 8) | cr0;
+                    var wx = plx, wy = ply, wt = wave.time;
+                    var waveVal = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
+                                + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
+                                + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
+                    var wc = waveVal * 7;
+                    cR += wc; cG += wc; cB += wc * 0.5;
                 }
+
+                var c = 0xFF000000
+                      | ((cB < 0 ? 0 : cB > 255 ? 255 : cB | 0) << 16)
+                      | ((cG < 0 ? 0 : cG > 255 ? 255 : cG | 0) << 8)
+                      |  (cR < 0 ? 0 : cR > 255 ? 255 : cR | 0);
 
                 // Apply fog: 육지는 어두운 실루엣, 바다는 하늘색으로
                 if (fog > 0.05) {
