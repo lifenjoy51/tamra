@@ -637,22 +637,30 @@
         if (input.lookup)   camera.horizon += 2 * dt;
         if (input.lookdown)  camera.horizon -= 2 * dt;
 
-        // 카메라: 배 뒤쪽 방향으로 스프링암 — 육지 만나면 그 앞에서 멈춤
+        // 카메라: 배 뒤쪽 방향으로 스프링암. 서브유닛 ray march + margin 연속화.
+        // ray march의 cell 경계 hard step은 ray 본질상 남으므로, 최종 카메라 위치를
+        // temporal smoothing (지수 감쇠)로 trailing — 회전/충돌 시 잔점프를 시간축으로 분산.
         var dirX = Math.sin(boat.angle);
         var dirY = Math.cos(boat.angle);
+        var CAM_RAY_STEP = 0.125;
+        var MARCH_MAX = CAM_DIST + CAM_LAND_MARGIN;
         var safeDist = CAM_DIST;
-        for (var t = 1; t <= CAM_DIST; t++) {
+        for (var t = CAM_RAY_STEP; t <= MARCH_MAX; t += CAM_RAY_STEP) {
             var rx = boat.gx + t * dirX;
             var ry = boat.gy + t * dirY;
             var roff = ((Math.floor(ry) & MASK) << SHIFT) + (Math.floor(rx) & MASK) | 0;
             if (altitude[roff] > SEA) {
                 safeDist = t - CAM_LAND_MARGIN;
                 if (safeDist < 0) safeDist = 0;
+                else if (safeDist > CAM_DIST) safeDist = CAM_DIST;
                 break;
             }
         }
-        camera.x = boat.gx + safeDist * dirX;
-        camera.y = boat.gy + safeDist * dirY;
+        var targetX = boat.gx + safeDist * dirX;
+        var targetY = boat.gy + safeDist * dirY;
+        var CAM_SMOOTH = 0.25; // 1.0=즉시, 0=정지
+        camera.x += (targetX - camera.x) * CAM_SMOOTH;
+        camera.y += (targetY - camera.y) * CAM_SMOOTH;
         camera.angle = boat.angle;
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
