@@ -34,12 +34,29 @@
             text-align: center;
             line-height: 2;
         }
+        #debug {
+            display: none;
+            position: fixed;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(0, 0, 0, 0.65);
+            color: #c8e8ff;
+            font-size: 12px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            padding: 8px 12px;
+            line-height: 1.5;
+            white-space: pre;
+            border: 1px solid rgba(200, 230, 255, 0.25);
+            border-radius: 3px;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
 <div id="loading">지형 데이터 로딩 중...</div>
 <canvas id="c"></canvas>
 <div id="hud">W·S 전진/후진 │ A·D 회전 │ Q·E 시선</div>
+<div id="debug"></div>
 
 <script>
 (async function() {
@@ -159,12 +176,13 @@
 
                 var r, g, b;
                 if (hi <= SEA) {
-                    // 바다 (깊이별)
-                    var d = SEA - hi;
-                    if (d < 5)       { r = 70;  g = 140 - d * 4;   b = 170 - d * 2; }
-                    else if (d < 15) { r = 45;  g = 100 - d;       b = 160 - d; }
-                    else if (d < 40) { r = 30;  g = 65 - d * 0.4;  b = 140 - d * 0.5; }
-                    else             { r = 18;  g = 35;            b = 90; }
+                    // 바다 — sqrt 커브로 shore 주변 연청록 대비 강조, 그 후 선형으로 심해 navy
+                    var xd = (SEA - hi) * (1/SEA);
+                    if (xd < 0) xd = 0; else if (xd > 1) xd = 1;
+                    var tt = Math.sqrt(xd); // shore 근처 급변
+                    r = 150 - tt * 132;  // 150 → 18
+                    g = 200 - tt * 158;  // 200 → 42
+                    b = 200 - tt * 100;  // 200 → 100
                     r += n * 0.3; g += n * 0.3; b += n * 0.3;
                     // 바다는 hillshading 적용 안함
                 } else {
@@ -221,6 +239,8 @@
     var altitude = new Uint8Array(SIZE * SIZE);
     var colormap = new Uint32Array(SIZE * SIZE);
     altitude.fill(SEA); // 기본값 바다
+    window.__altitude = altitude;
+    window.__colormap = colormap;
 
     var slotTiles = new Array(BUF_TILES * BUF_TILES).fill(null); // key of tile in each slot
     var loadingTiles = {};  // key → Promise
@@ -332,6 +352,8 @@
     document.getElementById('loading').style.display = 'none';
     canvas.style.display = 'block';
     document.getElementById('hud').style.display = 'block';
+    var debugEl = document.getElementById('debug');
+    debugEl.style.display = 'block';
 
     // --- Wave (파도) ---
     var wave = {
@@ -344,17 +366,26 @@
         ripple: { dx: 0.60, dy: 0.45, speed: 2.3, amp: 0.4 }
     };
 
+    // --- Wind (풍향) ---
+    // 노이즈 블록 회전 축 → 동서남북으로 네모가 정렬되지 않게 함
+    // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
+    var wind = { angleRad: Math.PI / 4 }; // 북동풍
+    window.__wind = wind;
+
     // --- Boat (플레이어 조종 대상) ---
     // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H)
     var boat = { gx: window.__startGx, gy: window.__startGy, angle: 0.0 };
+    window.__boat = boat; // 디버그: 외부에서 위치 조작
 
     // --- Camera (3인칭: 배 뒤에서 추적) ---
-    var CAM_DIST = 15;       // 배 뒤쪽 거리 (map units)
-    var CAM_HEIGHT = SEA + 60; // 카메라 높이 (높을수록 지형 벽 감소)
+    var CAM_DIST = 5;               // 배 뒤쪽 거리 (map units) — 작을수록 해안 근접감
+    var BASE_CAM_METERS = 65;       // 기본 카메라 높이 (meters, ~배 위 시점)
+    var CAM_LAND_MARGIN = 2;        // 스프링암: 육지 만나면 이 간격만큼 앞에서 멈춤
+    var CAM_HEIGHT_MARGIN = 20;     // 카메라 아래 지형 있을 때 띄울 여유 (m)
     // camera.x, camera.y는 글로벌 월드 좌표 (렌더 루프에서 & MASK로 버퍼 위치 매핑)
     var camera = {
         x: boat.gx, y: boat.gy,
-        height: CAM_HEIGHT,
+        heightMeters: BASE_CAM_METERS,
         angle: 0.0,
         horizon: 100,
         distance: 800
@@ -370,15 +401,70 @@
 
     var time = new Date().getTime();
 
-    // --- Key handlers (reference style: store state, process in UpdateCamera) ---
+    // --- Key handlers ---
+    // 회전(A/D) / 이동(W/S) 둘 다 키 누를 때마다 이산 1 단위 변화.
+    // hold 시 브라우저 auto-repeat로 연속 효과.
+    // 미니맵: -/= 로 축소/확대
+    var ROT_STEP = Math.PI / 180;  // 초기 1°, [ / ] 로 절반/두배
+    var MOVE_STEP = 1;             // 초기 1 world unit, , / . 로 절반/두배
+    var ROT_STEP_MIN = Math.PI / 1440, ROT_STEP_MAX = Math.PI / 4;   // 0.125° ~ 45°
+    var MOVE_STEP_MIN = 0.0625, MOVE_STEP_MAX = 64;                   // 1/16 ~ 64 unit
+    var minimapStride = 24;
+    var MM_STRIDE_MIN = 0.25, MM_STRIDE_MAX = 2048;
+
+    // 배 이동 (해안 1 unit 버퍼 체크). dx,dy는 1 unit 이동 벡터.
+    function moveBoat(dx, dy) {
+        var mvLen = Math.hypot(dx, dy);
+        if (mvLen === 0) return;
+        var SUBSTEPS = Math.max(1, Math.ceil(mvLen * 4));
+        var sx = dx / SUBSTEPS, sy = dy / SUBSTEPS;
+        var uX = dx / mvLen, uY = dy / mvLen;
+        for (var si = 0; si < SUBSTEPS; si++) {
+            var nx = boat.gx + sx;
+            var ny = boat.gy + sy;
+            var noff = ((Math.floor(ny) & MASK) << SHIFT) + (Math.floor(nx) & MASK) | 0;
+            if (altitude[noff] > SEA) break;
+            var bufX = nx + uX, bufY = ny + uY;
+            var boff = ((Math.floor(bufY) & MASK) << SHIFT) + (Math.floor(bufX) & MASK) | 0;
+            if (altitude[boff] > SEA) break;
+            nx = ((nx % WORLD_W) + WORLD_W) % WORLD_W;
+            if (ny < 0) ny = 0;
+            else if (ny > WORLD_H - 1) ny = WORLD_H - 1;
+            boat.gx = nx;
+            boat.gy = ny;
+        }
+    }
+
     document.onkeydown = function(e) {
         switch (e.keyCode) {
-            case 87: case 38: input.forwardbackward =  3; break; // W, Up
-            case 83: case 40: input.forwardbackward = -3; break; // S, Down
-            case 65: case 37: input.leftright =  1; break;       // A, Left
-            case 68: case 39: input.leftright = -1; break;       // D, Right
-            case 81: input.lookup   = true; break;               // Q
-            case 69: input.lookdown = true; break;               // E
+            case 87: case 38: // W, Up: 1 unit 전진
+                moveBoat(-Math.sin(boat.angle) * MOVE_STEP, -Math.cos(boat.angle) * MOVE_STEP);
+                break;
+            case 83: case 40: // S, Down: 1 unit 후진
+                moveBoat( Math.sin(boat.angle) * MOVE_STEP,  Math.cos(boat.angle) * MOVE_STEP);
+                break;
+            case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
+            case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
+            case 81: input.lookup   = true; break;           // Q
+            case 69: input.lookdown = true; break;           // E
+            case 187: // '=' / '+' : 미니맵 확대
+                minimapStride = Math.max(MM_STRIDE_MIN, minimapStride / 1.5);
+                break;
+            case 189: // '-' : 미니맵 축소
+                minimapStride = Math.min(MM_STRIDE_MAX, minimapStride * 1.5);
+                break;
+            case 188: // ',' : 이동 속도 ÷2
+                MOVE_STEP = Math.max(MOVE_STEP_MIN, MOVE_STEP / 2);
+                break;
+            case 190: // '.' : 이동 속도 ×2
+                MOVE_STEP = Math.min(MOVE_STEP_MAX, MOVE_STEP * 2);
+                break;
+            case 219: // '[' : 회전 속도 ÷2
+                ROT_STEP = Math.max(ROT_STEP_MIN, ROT_STEP / 2);
+                break;
+            case 221: // ']' : 회전 속도 ×2
+                ROT_STEP = Math.min(ROT_STEP_MAX, ROT_STEP * 2);
+                break;
         }
         e.preventDefault();
         return false;
@@ -386,9 +472,6 @@
 
     document.onkeyup = function(e) {
         switch (e.keyCode) {
-            case 87: case 38: case 83: case 40: input.forwardbackward = 0; break;
-            case 65: case 37: case 68: case 39: input.leftright = 0; break;
-            // R/F 제거 (배는 해수면 고정)
             case 81: input.lookup   = false; break;
             case 69: input.lookdown = false; break;
         }
@@ -426,15 +509,15 @@
         var sinang = Math.sin(camera.angle);
         var cosang = Math.cos(camera.angle);
 
-        var HORIZON_Y = camera.horizon + 5 | 0; // 수평선 약간 아래
+        // Render가 수평선 위/아래 전부 담당. 육지 샘플이 수평선 아래로 투영되면
+        // 물에 가려 안 보이는 게 맞으므로 skip → 더 먼 z의 바다 샘플이 채우게 함
         var hiddeny = new Int32Array(SCR_W);
         for (var i = 0; i < SCR_W | 0; i = i + 1 | 0)
-            hiddeny[i] = HORIZON_Y;  // 수평선 아래는 렌더링하지 않음
+            hiddeny[i] = SCR_H;
 
         var deltaz = 1.0;
         var distSq = camera.distance * camera.distance;
-        var camH = camera.height < 256 ? camera.height : 255;
-        var camMeters = heightMeters[camH];
+        var camMeters = camera.heightMeters;
 
         for (var z = 1; z < camera.distance; z += deltaz) {
             // 90 degree field of view
@@ -458,12 +541,6 @@
                 var mapoffset = ((Math.floor(ply) & MASK) << SHIFT) + (Math.floor(plx) & MASK) | 0;
                 var isSea = altitude[mapoffset] <= SEA;
 
-                // 카메라~배 사이의 육지 스킵 (등 뒤 산이 화면을 가리는 것 방지)
-                if (!isSea && z < CAM_DIST) {
-                    plx += dx; ply += dy;
-                    continue;
-                }
-
                 // 미터 단위로 변환 후 투영 (구간별 scale 차이 자동 보정)
                 var terMeters = heightMeters[altitude[mapoffset]];
 
@@ -479,12 +556,22 @@
 
                 var heightonscreen = (camMeters - terMeters) * projScale + camera.horizon | 0;
 
+                // 표준 Voxel Space occlusion: 지금까지 그린 것보다 위(작은 y)일 때만 그림
+                // 바다는 가까운(z작은) 샘플이 화면 아래쪽을 먼저 채우고,
+                // 점점 hiddeny가 수평선 쪽으로 올라가며, 저지대 육지는 바다 벽보다
+                // 위로 튀어나올 때만 보임 (자연스러운 shoreline)
+                if (heightonscreen >= hiddeny[i]) {
+                    plx += dx;
+                    ply += dy;
+                    continue;
+                }
+
                 // 색상
                 var c = colormap[mapoffset];
 
                 // 파도 색상 변조: 밝은 부분(마루)과 어두운 부분(골)
                 if (isSea && z < camera.distance * 0.7) {
-                    var wc = waveVal * 3 | 0;
+                    var wc = waveVal * 7 | 0;
                     var cr0 = (c & 0xFF) + wc;
                     var cg0 = ((c >> 8) & 0xFF) + wc;
                     var cb0 = ((c >> 16) & 0xFF) + (wc >> 1);
@@ -506,7 +593,7 @@
                 }
 
                 DrawVerticalLine(i, heightonscreen | 0, hiddeny[i], c);
-                if (heightonscreen < hiddeny[i]) hiddeny[i] = heightonscreen;
+                hiddeny[i] = heightonscreen | 0;
                 plx += dx;
                 ply += dy;
             }
@@ -525,32 +612,32 @@
         var current = new Date().getTime();
         var dt = (current - time) * 0.03;
 
-        // 입력 → 배 이동 (글로벌 좌표)
-        if (input.forwardbackward !== 0) {
-            var nx = boat.gx - input.forwardbackward * Math.sin(boat.angle) * dt;
-            var ny = boat.gy - input.forwardbackward * Math.cos(boat.angle) * dt;
-            // 버퍼 조회로 육지 판정
-            var noff = ((Math.floor(ny) & MASK) << SHIFT) + (Math.floor(nx) & MASK) | 0;
-            if (altitude[noff] <= SEA) {
-                // 월드 경계 처리: 경도 wrap, 위도 clamp
-                nx = ((nx % WORLD_W) + WORLD_W) % WORLD_W;
-                if (ny < 0) ny = 0;
-                else if (ny > WORLD_H - 1) ny = WORLD_H - 1;
-                boat.gx = nx;
-                boat.gy = ny;
-            }
-        }
-        if (input.leftright !== 0) {
-            boat.angle += input.leftright * 0.1 * dt;
-        }
+        // 이동은 이산 입력 이벤트에서 moveBoat()로 처리 (연속 이동 없음)
         if (input.lookup)   camera.horizon += 2 * dt;
         if (input.lookdown)  camera.horizon -= 2 * dt;
 
-        // 카메라: 배 뒤쪽에서 추적 (글로벌)
-        camera.x = boat.gx + CAM_DIST * Math.sin(boat.angle);
-        camera.y = boat.gy + CAM_DIST * Math.cos(boat.angle);
+        // 카메라: 배 뒤쪽 방향으로 스프링암 — 육지 만나면 그 앞에서 멈춤
+        var dirX = Math.sin(boat.angle);
+        var dirY = Math.cos(boat.angle);
+        var safeDist = CAM_DIST;
+        for (var t = 1; t <= CAM_DIST; t++) {
+            var rx = boat.gx + t * dirX;
+            var ry = boat.gy + t * dirY;
+            var roff = ((Math.floor(ry) & MASK) << SHIFT) + (Math.floor(rx) & MASK) | 0;
+            if (altitude[roff] > SEA) {
+                safeDist = t - CAM_LAND_MARGIN;
+                if (safeDist < 0) safeDist = 0;
+                break;
+            }
+        }
+        camera.x = boat.gx + safeDist * dirX;
+        camera.y = boat.gy + safeDist * dirY;
         camera.angle = boat.angle;
-        camera.height = CAM_HEIGHT;
+
+        // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
+        var camoff = ((Math.floor(camera.y) & MASK) << SHIFT) + (Math.floor(camera.x) & MASK) | 0;
+        var terAtCamM = heightMeters[altitude[camoff]];
+        camera.heightMeters = Math.max(BASE_CAM_METERS, terAtCamM + CAM_HEIGHT_MARGIN);
 
         // 타일 관리: 보트 주변 3x3 로드 보장
         ensureTilesLoaded();
@@ -564,8 +651,10 @@
         var wt = wave.time;
         var sinang = Math.sin(camera.angle);
         var cosang = Math.cos(camera.angle);
-        var camH = camera.height < 256 ? camera.height : 255;
-        var camMeters = heightMeters[camH];
+        var camMeters = camera.heightMeters;
+        // 풍향 회전 (노이즈 격자를 풍향 축으로 돌림 → 치트 불가)
+        var windCos = Math.cos(wind.angleRad);
+        var windSin = Math.sin(wind.angleRad);
 
         for (var y = startY; y < SCR_H; y++) {
             var base = y * SCR_W;
@@ -588,14 +677,39 @@
             var mf = 1 - fog;
 
             var wx = plx, wy = ply;
+            var wtInt = (wt * 3) | 0;
             for (var x = 0; x < SCR_W; x++) {
                 // 월드 좌표 기반 파도 (Render의 파도와 동일한 파라미터)
                 var wv = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
                        + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
                        + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
 
-                var wc = wv * 3 | 0;
-                var r = 25 + wc, g = 55 + wc, b = 120 + (wc >> 1);
+                var wc = wv * 7 | 0;
+
+                // colormap 1회 조회 (바다 깊이별 색 이미 타일 생성 시 베이크됨)
+                var ix = Math.floor(wx) & MASK;
+                var iy = Math.floor(wy) & MASK;
+                var mapoff = (iy << SHIFT) + ix | 0;
+                var r, g, b;
+                if (altitude[mapoff] <= SEA) {
+                    var cmc = colormap[mapoff];
+                    r = (cmc & 0xFF);
+                    g = (cmc >> 8) & 0xFF;
+                    b = (cmc >> 16) & 0xFF;
+                } else {
+                    // 샘플이 육지에 걸린 경우 (해안 정면 90° 근처에서 발생)
+                    // → 인접 연안 색(얕은 바다 shore 색)으로 폴백, 급격한 끊김 방지
+                    r = 120; g = 170; b = 180;
+                }
+                // 월드 좌표 + 풍향 회전 → 블록 축이 바람 방향으로 기울어짐 (방위 치트 방지)
+                var rotWx = wx * windCos - wy * windSin;
+                var rotWy = wx * windSin + wy * windCos;
+                var bx2 = (rotWx * 20) | 0;
+                var by2 = (rotWy * 20) | 0;
+                var nz = (((bx2 * 53 + by2 * 89 + wtInt) ^ (bx2 * 11 + by2 * 7)) & 63) - 31; // -31..31
+                r += wc + nz;
+                g += wc + nz;
+                b += (wc >> 1) + (nz * 0.7 | 0);
 
                 // fog 적용
                 r = r * mf + FOG_SEA_R * fog | 0;
@@ -617,7 +731,7 @@
         var MM_SIZE = 96;
         var MM_X = 6;
         var MM_Y = SCR_H - MM_SIZE - 6;
-        var STRIDE = 24; // 월드 픽셀/미니맵 픽셀 (80*24 ≈ 1920 월드 범위, 약 3.75 타일)
+        var STRIDE = minimapStride; // 월드 픽셀/미니맵 픽셀 (- / = 키로 조절)
 
         // 테두리
         for (var i = -1; i <= MM_SIZE; i++) {
@@ -700,25 +814,68 @@
         imagedata.data.set(buf8);
         ctx.putImageData(imagedata, 0, 0);
 
-        // 배 위치: 화면 정중앙
+        // 배 위치: 화면 중앙에서 아래쪽 (수평선 밑으로 선체가 내려오도록)
+        var BOAT_Y_OFFSET = 45;
         var sx = (SCR_W - boatImg.width) / 2 | 0;
-        var sy = (SCR_H - boatImg.height) / 2 + bob | 0;
+        var sy = (SCR_H - boatImg.height) / 2 + BOAT_Y_OFFSET + bob | 0;
         ctx.drawImage(boatImg, sx, sy);
     }
 
-    // --- Main Draw loop (상시 렌더링: 파도 애니메이션) ---
+    // --- Main Draw loop (30fps 고정) ---
     var updaterunning = false;
+    var FRAME_INTERVAL = 1000 / 30;
+    var lastDrawTime = 0;
+    var fpsFrames = 0, fpsStart = 0, fpsCurrent = 0;
 
-    function Draw() {
+    function pad4(n) { n = n | 0; return n < 0 ? String(n) : (n < 10 ? '   ' + n : n < 100 ? '  ' + n : n < 1000 ? ' ' + n : '' + n); }
+
+    function UpdateDebug() {
+        var tx = Math.floor(boat.gx / TILE_SIZE);
+        var ty = Math.floor(boat.gy / TILE_SIZE);
+        var slot = (ty % BUF_TILES) * BUF_TILES + (tx % BUF_TILES);
+        var angDeg = (((boat.angle * 180 / Math.PI) % 360) + 360) % 360;
+        var bOff = ((Math.floor(boat.gy) & MASK) << SHIFT) + (Math.floor(boat.gx) & MASK) | 0;
+        var bAlt = altitude[bOff];
+        var loaded = 0;
+        for (var si = 0; si < slotTiles.length; si++) if (slotTiles[si] !== null) loaded++;
+        var windDeg = (wind.angleRad * 180 / Math.PI) % 360;
+        debugEl.textContent =
+            'Tile:    ' + tx + ',' + ty + ' (slot ' + slot + ')\n' +
+            'Pos:     ' + (boat.gx | 0) + ',' + (boat.gy | 0) + '\n' +
+            'Ang:     ' + (angDeg | 0) + '°\n' +
+            'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
+            'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
+            'CamDist: ' + CAM_DIST + '\n' +
+            'Wind:    ' + (windDeg | 0) + '°\n' +
+            'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
+            'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
+            'MMZoom:  1:' + minimapStride + '\n' +
+            'FPS:     ' + fpsCurrent;
+    }
+
+    function Draw(now) {
+        window.requestAnimationFrame(Draw);
+        if (now === undefined) now = performance.now();
+        if (now - lastDrawTime < FRAME_INTERVAL) return;
+        lastDrawTime = now;
+
         updaterunning = true;
         UpdateCamera();
         wave.time += 0.04;
         DrawBackground();
-        Render();      // 수평선 위: 진짜 VoxelSpace
-        FillSea();     // 수평선 아래: 가짜 바다
-        DrawMinimap(); // 좌하단 디버그 미니맵
+        Render();
+        DrawMinimap();
         DrawBoat();
-        window.requestAnimationFrame(Draw);
+
+        // FPS 1초 간격 갱신
+        fpsFrames++;
+        if (fpsStart === 0) fpsStart = now;
+        if (now - fpsStart >= 1000) {
+            fpsCurrent = Math.round(fpsFrames * 1000 / (now - fpsStart));
+            fpsFrames = 0;
+            fpsStart = now;
+        }
+        UpdateDebug();
     }
 
     // Initial render
