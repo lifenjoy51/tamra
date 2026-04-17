@@ -371,6 +371,7 @@
     // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
     var wind = { angleRad: Math.PI / 4 }; // 북동풍
     window.__wind = wind;
+    // debug: camera 전역 접근
 
     // --- Boat (플레이어 조종 대상) ---
     // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H)
@@ -390,6 +391,7 @@
         horizon: 100,
         distance: 800
     };
+    window.__camera = camera;
 
     // --- Input ---
     var input = {
@@ -522,7 +524,9 @@
         for (var i = 0; i < SCR_W | 0; i = i + 1 | 0)
             hiddeny[i] = SCR_H;
 
-        var deltaz = 1.0;
+        // deltaz: 작을수록 far z에서 1도 회전 시 sample shift가 줄어 angle aliasing 감소.
+        // 근거리는 세밀하게, 멀리는 완만하게 증가.
+        var deltaz = 0.5;
         var distSq = camera.distance * camera.distance;
         var camMeters = camera.heightMeters;
 
