@@ -412,7 +412,8 @@
     var minimapStride = 24;
     var MM_STRIDE_MIN = 0.25, MM_STRIDE_MAX = 2048;
 
-    // 배 이동 — 대상 셀이 바다면 진입 허용 (육지만 차단)
+    // 배 이동 — 대상 셀과 주변 8방향(상하좌우+대각선) 모두 바다여야 진입 허용.
+    // 해안선에 붙어있는 바다 1픽셀(coastal 1-cell)도 진입 불가 → 육지와 최소 1칸 간격 유지.
     function moveBoat(dx, dy) {
         var mvLen = Math.hypot(dx, dy);
         if (mvLen === 0) return;
@@ -421,8 +422,15 @@
         for (var si = 0; si < SUBSTEPS; si++) {
             var nx = boat.gx + sx;
             var ny = boat.gy + sy;
-            var off = ((Math.floor(ny) & MASK) << SHIFT) + (Math.floor(nx) & MASK) | 0;
-            if (altitude[off] > SEA) break;
+            var cx = Math.floor(nx), cy = Math.floor(ny);
+            var blocked = false;
+            for (var oy = -1; oy <= 1 && !blocked; oy++) {
+                for (var ox = -1; ox <= 1; ox++) {
+                    var off = (((cy + oy) & MASK) << SHIFT) + ((cx + ox) & MASK) | 0;
+                    if (altitude[off] > SEA) { blocked = true; break; }
+                }
+            }
+            if (blocked) break;
             nx = ((nx % WORLD_W) + WORLD_W) % WORLD_W;
             if (ny < 0) ny = 0;
             else if (ny > WORLD_H - 1) ny = WORLD_H - 1;
