@@ -1173,8 +1173,8 @@
         var nowMs = new Date().getTime();
         var dtMs = nowMs - time;
 
-        // 게임 시간 누적 (TIME_SPEED 배속)
-        gameTime += dtMs * TIME_SPEED;
+        // 게임 시간 누적 (TIME_SPEED 배속). 하늘보기 중엔 정지.
+        if (!skyMapOn) gameTime += dtMs * TIME_SPEED;
 
         // 이동은 이산 입력 이벤트에서 moveBoat()로 처리 (연속 이동 없음)
         // 시선 고정 — 화면 상단(row 0) = alt 90° (천정), horizon = SCR_H/2 = 180
@@ -1197,7 +1197,7 @@
 
         // 배 이동: 돛 추진 + 해류 drift를 각각 적용 (moveBoat로 해안 충돌 보존)
         //   UNIT_M = 400 m/unit → units = m/s × gameSeconds / 400
-        var gameDt = (dtMs * TIME_SPEED) / 1000;
+        var gameDt = skyMapOn ? 0 : (dtMs * TIME_SPEED) / 1000;
         if (gameDt > 0) {
             if (boat.sailUp && ship.sailMS > 0.01) {
                 var sU = ship.sailMS * gameDt / 400;
@@ -1302,84 +1302,100 @@
     }
 
     // --- DrawBoat (boat.png 스프라이트) ---
-    // --- 천구 전체 뷰 (polar azimuthal projection) ---
-    // 중심 = 천정, 외곽 = 지평선. 카메라 보는 방향이 화면 위쪽.
+    // --- 하늘보기 (polar azimuthal projection) ---
+    // 중심 = 천정, 외곽 = 지평선. 화면 위쪽 = 배 진행 방향.
+    // 낮엔 태양·하늘색, 밤엔 별. 토글 상태에선 시간 정지.
     function DrawSkyMap() {
         if (!skyMapOn) return;
         var cx = SCR_W / 2;
         var cy = SCR_H / 2;
         var R = Math.min(SCR_W, SCR_H) / 2 - 14;
-        // 배경: 어두운 밤색 풀 오버레이
-        ctx.fillStyle = 'rgba(4, 4, 14, 0.96)';
+
+        // 하늘 색: 태양 고도 기반으로 낮·황혼·밤 blend (updateSky와 동일 규칙)
+        var dayW   = (sun.altDeg - 5) / 10;     if (dayW < 0) dayW = 0;   else if (dayW > 1) dayW = 1;
+        var nightW = (-6 - sun.altDeg) / 6;     if (nightW < 0) nightW = 0; else if (nightW > 1) nightW = 1;
+        var duskW  = 1 - dayW - nightW;         if (duskW < 0) duskW = 0;
+        var bR = SKY_DAY_Z[0]*dayW + SKY_DUSK_Z[0]*duskW + SKY_NIGHT_Z[0]*nightW;
+        var bG = SKY_DAY_Z[1]*dayW + SKY_DUSK_Z[1]*duskW + SKY_NIGHT_Z[1]*nightW;
+        var bB = SKY_DAY_Z[2]*dayW + SKY_DUSK_Z[2]*duskW + SKY_NIGHT_Z[2]*nightW;
+        // 전체 배경 (원 밖 영역은 검정)
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.96)';
         ctx.fillRect(0, 0, SCR_W, SCR_H);
+        // 원반 (하늘)
+        ctx.fillStyle = 'rgb(' + (bR|0) + ',' + (bG|0) + ',' + (bB|0) + ')';
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
         // 지평선 원
-        ctx.strokeStyle = 'rgba(140, 160, 200, 0.6)';
+        ctx.strokeStyle = 'rgba(180, 200, 230, 0.7)';
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
         // 고도 격자 (30°, 60°)
-        ctx.strokeStyle = 'rgba(90, 110, 150, 0.35)';
+        ctx.strokeStyle = 'rgba(180, 200, 230, 0.25)';
         ctx.beginPath(); ctx.arc(cx, cy, R * (2/3), 0, Math.PI * 2); ctx.stroke();
         ctx.beginPath(); ctx.arc(cx, cy, R * (1/3), 0, Math.PI * 2); ctx.stroke();
-        // 십자선 (카메라 기준 전후좌우)
-        ctx.strokeStyle = 'rgba(90, 110, 150, 0.25)';
+        // 십자선 (전후좌우)
+        ctx.strokeStyle = 'rgba(180, 200, 230, 0.2)';
         ctx.beginPath();
         ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
         ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
         ctx.stroke();
-        // 별 그리기
-        for (var si = 0; si < STARS.length; si++) {
-            var star = STARS[si];
-            var st = starState[si];
-            if (st.altRad < 0) continue;  // 지평선 아래
-            var dlt = st.azRad + camera.angle;
-            var r = (Math.PI / 2 - st.altRad) / (Math.PI / 2) * R;
-            var px = cx + Math.sin(dlt) * r;
-            var py = cy - Math.cos(dlt) * r;
-            // 크기·밝기: mag 낮을수록 크고 밝게
-            var mag = star.mag;
-            var size, alpha;
-            if (mag < 0)      { size = 3; alpha = 1.0; }
-            else if (mag < 1) { size = 2.5; alpha = 0.95; }
-            else if (mag < 2) { size = 2;   alpha = 0.85; }
-            else if (mag < 3) { size = 1.5; alpha = 0.7; }
-            else              { size = 1;   alpha = 0.55; }
-            ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
-            ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
+
+        // 태양 (altDeg > -2일 때)
+        if (sun.altDeg > -2) {
+            var sDlt = sun.azRad + camera.angle;
+            var sR2 = (Math.PI / 2 - sun.altRad) / (Math.PI / 2) * R;
+            var spx = cx + Math.sin(sDlt) * sR2;
+            var spy = cy - Math.cos(sDlt) * sR2;
+            var sunR, sunG, sunB;
+            if (sun.altDeg > 15)      { sunR = 255; sunG = 245; sunB = 220; }
+            else if (sun.altDeg > 0)  { sunR = 255; sunG = 190; sunB = 130; }
+            else                       { sunR = 240; sunG = 130; sunB =  80; }
+            // 후광
+            var grad = ctx.createRadialGradient(spx, spy, 2, spx, spy, 24);
+            grad.addColorStop(0, 'rgba(' + sunR + ',' + sunG + ',' + sunB + ',1)');
+            grad.addColorStop(1, 'rgba(' + sunR + ',' + sunG + ',' + sunB + ',0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(spx, spy, 24, 0, Math.PI * 2); ctx.fill();
+            // 디스크
+            ctx.fillStyle = 'rgb(' + sunR + ',' + sunG + ',' + sunB + ')';
+            ctx.beginPath(); ctx.arc(spx, spy, 5, 0, Math.PI * 2); ctx.fill();
         }
-        // 동서남북 라벨 (카메라 기준 상대 방위)
-        //   화면 위쪽 = 카메라 보는 방향. camera.angle 0=북 기준.
-        //   화면 '위'가 어디 방위인지: -camera.angle → 0이면 북
-        ctx.fillStyle = 'rgba(255, 230, 180, 0.95)';
-        ctx.font = 'bold 11px monospace';
+
+        // 별 (밤 구간에서만, 낮엔 가시성 0)
+        if (sun.altDeg < 0) {
+            var nightFade = (-sun.altDeg) / 6;
+            if (nightFade > 1) nightFade = 1;
+            for (var si = 0; si < STARS.length; si++) {
+                var star = STARS[si];
+                var st = starState[si];
+                if (st.altRad < 0) continue;
+                var dlt = st.azRad + camera.angle;
+                var r = (Math.PI / 2 - st.altRad) / (Math.PI / 2) * R;
+                var px = cx + Math.sin(dlt) * r;
+                var py = cy - Math.cos(dlt) * r;
+                var mag = star.mag, size, alpha;
+                if (mag < 0)      { size = 3;   alpha = 1.0;  }
+                else if (mag < 1) { size = 2.5; alpha = 0.95; }
+                else if (mag < 2) { size = 2;   alpha = 0.85; }
+                else if (mag < 3) { size = 1.5; alpha = 0.7;  }
+                else              { size = 1;   alpha = 0.55; }
+                alpha *= nightFade;
+                ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
+                ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+
+        // 천정 마커 + 배 방향 화살표 (화면 위쪽 = 배가 향한 곳)
+        ctx.fillStyle = 'rgba(255, 230, 180, 0.8)';
+        ctx.font = 'bold 10px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        var dirs = [
-            { name: 'N', az: 0 },
-            { name: 'E', az: Math.PI / 2 },
-            { name: 'S', az: Math.PI },
-            { name: 'W', az: -Math.PI / 2 }
-        ];
-        for (var di = 0; di < 4; di++) {
-            var d = dirs[di];
-            var dd = d.az + camera.angle;
-            var dpx = cx + Math.sin(dd) * (R + 8);
-            var dpy = cy - Math.cos(dd) * (R + 8);
-            ctx.fillText(d.name, dpx, dpy);
-        }
-        // 천정 마커 + 범례
-        ctx.fillStyle = 'rgba(255, 230, 180, 0.8)';
         ctx.fillText('•', cx, cy);
+        ctx.fillText('▲', cx, cy - R - 10);
+        // 범례
         ctx.textAlign = 'left';
         ctx.font = '10px monospace';
         ctx.fillStyle = 'rgba(200, 220, 255, 0.7)';
-        ctx.fillText('K: 닫기   (중심=천정, 위=' + compassName(camera.angle) + ')', 12, SCR_H - 12);
-    }
-
-    function compassName(camAng) {
-        // 카메라 각도 → 방위 이름
-        var a = ((-camAng * 180 / Math.PI) % 360 + 360) % 360;
-        var names = ['북','북동','동','남동','남','남서','서','북서'];
-        return names[((a + 22.5) / 45 | 0) % 8];
+        ctx.fillText('K: 닫기   (중심=천정, 위=배 방향, 시간정지)', 12, SCR_H - 12);
     }
 
     function DrawBoat() {
