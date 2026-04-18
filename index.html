@@ -75,7 +75,7 @@
     <canvas id="c"></canvas>
     <div id="gameui"></div>
 </div>
-<div id="hud">W·S 전진/후진 │ A·D 회전</div>
+<div id="hud">W·S 돛 펼침/접음 │ A·D 조타</div>
 <div id="debug"></div>
 
 <script>
@@ -480,6 +480,23 @@
         if (wf < 0.3) wf = 0.3; else if (wf > 1.8) wf = 1.8;
         sail.windFactor = wf;
     }
+
+    // 선체 속도 합성: 돛 추진 + 해류 drift → ground velocity
+    function updateShipSpeed() {
+        var sMS = boat.sailUp ? sail.polar * sail.windFactor * BASE_SAIL_SPEED : 0;
+        ship.sailMS = sMS;
+        // 돛 추진: 선수 방향. boat.angle 0=북 기준 세계좌표 벡터 (-sin, -cos)
+        var sVx = -Math.sin(boat.angle) * sMS;
+        var sVy = -Math.cos(boat.angle) * sMS;
+        // 해류: flow direction (sin, -cos)
+        var cVx =  Math.sin(current.angleRad) * current.speedMS;
+        var cVy = -Math.cos(current.angleRad) * current.speedMS;
+        var vx = sVx + cVx, vy = sVy + cVy;
+        ship.groundMS = Math.hypot(vx, vy);
+        // 합성 방향 — 세계좌표 벡터 → 표준 방위
+        ship.groundDirRad = Math.atan2(vx, -vy);  // 0=북, π/2=동
+        if (ship.groundDirRad < 0) ship.groundDirRad += 2 * Math.PI;
+    }
     window.__sail = sail;
 
     // --- Current (해류) ---
@@ -626,8 +643,14 @@
 
     // --- Boat (플레이어 조종 대상) ---
     // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H)
-    var boat = { gx: window.__startGx, gy: window.__startGy, angle: Math.PI };
+    // sailUp: 돛 펼침 상태 (바람 + 돛 폴라에 따라 자동 전진)
+    var boat = { gx: window.__startGx, gy: window.__startGy, angle: Math.PI, sailUp: true };
     window.__boat = boat; // 디버그: 외부에서 위치 조작
+    // 기준 항해 속도: polar=1 · windFactor=1 (풍속 8 m/s 빔리치) 기준 4 m/s
+    var BASE_SAIL_SPEED = 4;
+    // ship 속도 상태: sail 추진, ground(해류 합성), heading
+    var ship = { sailMS: 0, groundMS: 0, groundDirRad: 0 };
+    window.__ship = ship;
 
     // --- Camera (3인칭: 배 뒤에서 추적) ---
     var BASE_CAM_METERS = 50;       // 기본 카메라 높이 (meters, ~배 위 시점)
@@ -787,16 +810,12 @@
 
     document.onkeydown = function(e) {
         switch (e.keyCode) {
-            case 87: case 38: { // W, Up: 전진 (바람·돛 효율 반영)
-                var effF = MOVE_STEP * polarFor(boat.angle) * sail.windFactor;
-                moveBoat(-Math.sin(boat.angle) * effF, -Math.cos(boat.angle) * effF);
+            case 87: case 38: // W, Up: 돛 펼침
+                boat.sailUp = true;
                 break;
-            }
-            case 83: case 40: { // S, Down: 후진 (반대 헤딩 기준 폴라)
-                var effB = MOVE_STEP * polarFor(boat.angle + Math.PI) * sail.windFactor;
-                moveBoat( Math.sin(boat.angle) * effB,  Math.cos(boat.angle) * effB);
+            case 83: case 40: // S, Down: 돛 접음
+                boat.sailUp = false;
                 break;
-            }
             case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
             case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
             case 187: // '=' / '+' : 미니맵 확대
@@ -1125,19 +1144,26 @@
         computeWind();
         computeSail();
         computeCurrent();
+        updateShipSpeed();
         computeWaves();
         updateStars();
         computeWeather();
 
-        // 해류 drift: 게임 시간 기준으로 배를 밀어줌 (moveBoat로 해안 충돌 보존)
-        //   UNIT_M = 400 m/unit → drift_units = speed_m/s × gameSeconds / 400
+        // 배 이동: 돛 추진 + 해류 drift를 각각 적용 (moveBoat로 해안 충돌 보존)
+        //   UNIT_M = 400 m/unit → units = m/s × gameSeconds / 400
         var gameDt = (dtMs * TIME_SPEED) / 1000;
-        if (current.speedMS > 0.01 && gameDt > 0) {
-            var dUnits = current.speedMS * gameDt / 400;
-            moveBoat(
-                 Math.sin(current.angleRad) * dUnits,
-                -Math.cos(current.angleRad) * dUnits
-            );
+        if (gameDt > 0) {
+            if (boat.sailUp && ship.sailMS > 0.01) {
+                var sU = ship.sailMS * gameDt / 400;
+                moveBoat(-Math.sin(boat.angle) * sU, -Math.cos(boat.angle) * sU);
+            }
+            if (current.speedMS > 0.01) {
+                var cU = current.speedMS * gameDt / 400;
+                moveBoat(
+                     Math.sin(current.angleRad) * cU,
+                    -Math.cos(current.angleRad) * cU
+                );
+            }
         }
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
@@ -1289,7 +1315,8 @@
             'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
             'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
             'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
-            'Sail:    ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
+            'Sail:    ' + (boat.sailUp ? 'UP  ' : 'DOWN') + ' ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
+            'Ship:    ' + ship.groundMS.toFixed(2) + ' m/s (' + (ship.groundMS * 3.6).toFixed(1) + ' km/h)\n' +
             'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
             'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
