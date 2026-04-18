@@ -146,8 +146,9 @@
     var SKY_NIGHT_Z = [  6,   8,  28], SKY_NIGHT_H = [ 12,  16,  40];
     var skyRow = new Uint32Array(SCR_H);
 
-    // 태양 고도(deg)에 따라 skyRow 재계산
-    function updateSky(altDeg) {
+    // 태양 고도(deg)에 따라 skyRow 재계산. cloudiness로 회색 blend.
+    function updateSky(altDeg, cloudiness) {
+        if (cloudiness === undefined) cloudiness = 0;
         var dayW   = (altDeg - 5) / 10;     if (dayW < 0) dayW = 0;   else if (dayW > 1) dayW = 1;
         var nightW = (-6 - altDeg) / 6;     if (nightW < 0) nightW = 0; else if (nightW > 1) nightW = 1;
         var duskW  = 1 - dayW - nightW;     if (duskW < 0) duskW = 0;
@@ -157,6 +158,18 @@
         var hR = SKY_DAY_H[0]*dayW + SKY_DUSK_H[0]*duskW + SKY_NIGHT_H[0]*nightW;
         var hG = SKY_DAY_H[1]*dayW + SKY_DUSK_H[1]*duskW + SKY_NIGHT_H[1]*nightW;
         var hB = SKY_DAY_H[2]*dayW + SKY_DUSK_H[2]*duskW + SKY_NIGHT_H[2]*nightW;
+        // 구름 blend: 낮엔 밝은 회색(200,205,210), 밤엔 어두운 회색(40,45,55), 황혼엔 주황 섞인 회색
+        var cGray = 40 + 160 * dayW + 80 * duskW;
+        var cGrayG = 45 + 160 * dayW + 70 * duskW;
+        var cGrayB = 55 + 155 * dayW + 60 * duskW;
+        var cdZ = cloudiness * 0.55;  // 천정 강도
+        var cdH = cloudiness * 0.35;  // 지평 강도 (작음 — fog에 이미 잡힘)
+        zR = zR * (1 - cdZ) + cGray * cdZ;
+        zG = zG * (1 - cdZ) + cGrayG * cdZ;
+        zB = zB * (1 - cdZ) + cGrayB * cdZ;
+        hR = hR * (1 - cdH) + cGray * cdH;
+        hG = hG * (1 - cdH) + cGrayG * cdH;
+        hB = hB * (1 - cdH) + cGrayB * cdH;
         for (var sy = 0; sy < SCR_H; sy++) {
             var t = sy / SCR_H;
             var r = zR + (hR - zR) * t | 0;
@@ -165,7 +178,7 @@
             skyRow[sy] = 0xFF000000 | (b << 16) | (g << 8) | r;
         }
     }
-    updateSky(45); // 초기값 (낮)
+    updateSky(45, 0.3); // 초기값 (낮, 부분적 구름)
 
     // --- 구간별 선형 매핑 (piecewise linear) ---
     // Uint8 값 → 실제 미터 역변환 LUT (렌더링 시 구간별 scale 보정)
@@ -559,6 +572,32 @@
     var starState = STARS.map(function() { return { altRad: 0, azRad: 0 }; });
     window.__stars = STARS;
     window.__starState = starState;
+
+    // --- Weather (구름·시정) ---
+    // cloudiness 0..1, visibilityCoef 0.5..1.0 (시정 거리 배율)
+    var weather = { cloudiness: 0.3, visibilityCoef: 1.0 };
+    function computeWeather() {
+        var lat = sun.lat;
+        var a = Math.abs(lat);
+        var base = 0.2;
+        // ITCZ (적도 수렴대, 계절 shift)
+        var shift = 5 * Math.sin(2 * Math.PI * (sun.dayOfYear - 81) / 365);
+        if (Math.abs(lat - shift) < 10) base += 0.5;
+        // 중위도 폭풍대
+        if (a > 40 && a < 60) base += 0.3;
+        // 아열대 고기압대 (맑음)
+        if (a > 22 && a < 35) base -= 0.15;
+        // 결정적 noise (위치·날짜·년도)
+        var seed = (Math.floor(lat * 3) + Math.floor(sun.lon * 3) * 13 + Math.floor(sun.dayOfYear / 3) * 7 + sun.year * 29) >>> 0;
+        var n = ((seed * 2654435761) >>> 0) / 4294967295;
+        base += (n - 0.5) * 0.4;
+        // 일변화 (낮 대류 증가)
+        base += Math.sin((sun.hourLocal - 6) * Math.PI / 12) * 0.08;
+        if (base < 0) base = 0; else if (base > 1) base = 1;
+        weather.cloudiness = base;
+        weather.visibilityCoef = 1.0 - base * 0.5;
+    }
+    window.__weather = weather;
     function updateStars() {
         // J2000 = 2000-01-01 12:00 UTC = Unix ms 946728000000. T in days from J2000.
         var Tdays = (gameTime / 86400000) - 10957.5;
@@ -816,7 +855,7 @@
     var PX_PER_RAD_H = SCR_W / (Math.PI / 2);
 
     function DrawBackground() {
-        updateSky(sun.altDeg);
+        updateSky(sun.altDeg, weather.cloudiness);
         for (var y = 0; y < SCR_H; y++) {
             var c = skyRow[y];
             var base = y * SCR_W;
@@ -826,10 +865,11 @@
         }
 
         // --- Stars ---
-        // 태양 고도 0° → 별 숨김, -12° 이하 → 완전한 밤
+        // 태양 고도 0° → 별 숨김, -12° 이하 → 완전한 밤. 구름에 가려짐 반영.
         if (sun.altDeg < 0) {
             var darkness = (-sun.altDeg) / 12;
             if (darkness > 1) darkness = 1;
+            darkness *= (1 - weather.cloudiness * 0.8);
             for (var si = 0; si < STARS.length; si++) {
                 var star = STARS[si];
                 var st = starState[si];
@@ -978,8 +1018,9 @@
             // projScale은 화면 세로 픽셀 수에 비례 (기준: 300px → 1.32)
             var projScale = (SCR_H * 0.0044) / z;
 
-            // Fog: 사진처럼 먼 곳일수록 짙은 대기 안개
-            var fog = Math.pow(z / camera.distance, 1.2);
+            // Fog: 사진처럼 먼 곳일수록 짙은 대기 안개. weather로 시정 단축.
+            var fog = Math.pow(z / (camera.distance * weather.visibilityCoef), 1.2);
+            if (fog > 1) fog = 1;
             var mf = 1.0 - fog;
 
             for (var i = 0; i < SCR_W | 0; i = i + 1 | 0) {
@@ -1086,6 +1127,7 @@
         computeCurrent();
         computeWaves();
         updateStars();
+        computeWeather();
 
         // 해류 drift: 게임 시간 기준으로 배를 밀어줌 (moveBoat로 해안 충돌 보존)
         //   UNIT_M = 400 m/unit → drift_units = speed_m/s × gameSeconds / 400
@@ -1249,6 +1291,7 @@
             'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
             'Sail:    ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
             'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
+            'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
             'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
             'MMZoom:  1:' + minimapStride + '\n' +
