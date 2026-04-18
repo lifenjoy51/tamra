@@ -434,6 +434,40 @@
     // 풍향(angleRad) · 풍속(speedMS) — computeWind()가 매 프레임 갱신
     var wind = { angleRad: Math.PI / 4, speedMS: 8 };
     window.__wind = wind;
+
+    // --- Sail (돛 효율) ---
+    // boat.angle 과 wind.angleRad 의 상대각(AoA) → polar 계수
+    //   IRONS  0..30°  0.05 (맞바람, 거의 못감)
+    //   CLOSE  30..60° 0.55 (클로즈홀드)
+    //   BEAM   60..120° 1.00 (빔리치, 최적)
+    //   BROAD  120..160° 1.20 (브로드리치, 최고속)
+    //   RUN    160..180° 0.90 (런닝, 세일 그림자 효과)
+    // wind.speedMS / 8 (기준) 기준 0.3..1.8 clamp
+    var sail = { polar: 1.0, mode: 'BEAM', windFactor: 1.0 };
+    function polarFor(headingRad) {
+        var rel = headingRad - wind.angleRad;
+        rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        var aoa = Math.abs(rel);
+        if (aoa < Math.PI / 6)        return 0.05;
+        else if (aoa < Math.PI / 3)   return 0.55;
+        else if (aoa < 2 * Math.PI / 3) return 1.00;
+        else if (aoa < 8 * Math.PI / 9) return 1.20;
+        else                          return 0.90;
+    }
+    function computeSail() {
+        var rel = boat.angle - wind.angleRad;
+        rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        var aoa = Math.abs(rel);
+        if      (aoa < Math.PI / 6)     { sail.polar = 0.05; sail.mode = 'IRONS'; }
+        else if (aoa < Math.PI / 3)     { sail.polar = 0.55; sail.mode = 'CLOSE'; }
+        else if (aoa < 2 * Math.PI / 3) { sail.polar = 1.00; sail.mode = 'BEAM';  }
+        else if (aoa < 8 * Math.PI / 9) { sail.polar = 1.20; sail.mode = 'BROAD'; }
+        else                            { sail.polar = 0.90; sail.mode = 'RUN';   }
+        var wf = wind.speedMS / 8;
+        if (wf < 0.3) wf = 0.3; else if (wf > 1.8) wf = 1.8;
+        sail.windFactor = wf;
+    }
+    window.__sail = sail;
     // debug: camera 전역 접근
 
     // --- Boat (플레이어 조종 대상) ---
@@ -599,12 +633,16 @@
 
     document.onkeydown = function(e) {
         switch (e.keyCode) {
-            case 87: case 38: // W, Up: 1 unit 전진
-                moveBoat(-Math.sin(boat.angle) * MOVE_STEP, -Math.cos(boat.angle) * MOVE_STEP);
+            case 87: case 38: { // W, Up: 전진 (바람·돛 효율 반영)
+                var effF = MOVE_STEP * polarFor(boat.angle) * sail.windFactor;
+                moveBoat(-Math.sin(boat.angle) * effF, -Math.cos(boat.angle) * effF);
                 break;
-            case 83: case 40: // S, Down: 1 unit 후진
-                moveBoat( Math.sin(boat.angle) * MOVE_STEP,  Math.cos(boat.angle) * MOVE_STEP);
+            }
+            case 83: case 40: { // S, Down: 후진 (반대 헤딩 기준 폴라)
+                var effB = MOVE_STEP * polarFor(boat.angle + Math.PI) * sail.windFactor;
+                moveBoat( Math.sin(boat.angle) * effB,  Math.cos(boat.angle) * effB);
                 break;
+            }
             case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
             case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
             case 187: // '=' / '+' : 미니맵 확대
@@ -867,9 +905,10 @@
         camera.y = boat.gy;
         camera.angle = boat.angle;
 
-        // 태양·바람 갱신 (위/경도 + 게임 시각 기반)
+        // 태양·바람·돛 효율 갱신 (위/경도 + 게임 시각 기반)
         computeSun();
         computeWind();
+        computeSail();
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
         var camoff = ((Math.floor(camera.y) & MASK) << SHIFT) + (Math.floor(camera.x) & MASK) | 0;
@@ -1020,6 +1059,7 @@
             'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
             'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
             'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
+            'Sail:    ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
             'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
             'MMZoom:  1:' + minimapStride + '\n' +
