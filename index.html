@@ -674,12 +674,155 @@
         // 쌍둥이 추가
         { ra: 6.628, dec: 16.40, mag: 1.92, n:'Alhena'    },
         // 거문고자리 추가
-        { ra:18.982, dec: 32.69, mag: 3.25, n:'Sulafat'   }
+        { ra:18.982, dec: 32.69, mag: 3.25, n:'Sulafat'   },
+        // 작은곰자리 (Polaris 보조)
+        { ra:14.845, dec: 74.16, mag: 2.08, n:'Kochab'    },
+        { ra:15.345, dec: 71.83, mag: 3.00, n:'Pherkad'   },
+        // 용자리
+        { ra:17.943, dec: 51.49, mag: 2.24, n:'Eltanin'   },
+        { ra:17.507, dec: 52.30, mag: 2.79, n:'Rastaban'  },
+        // 케페우스자리
+        { ra:21.309, dec: 62.59, mag: 2.46, n:'Alderamin' },
+        // 이리자리
+        { ra:14.698, dec:-47.39, mag: 2.30, n:'AlphaLup'  },
+        { ra:14.975, dec:-43.13, mag: 2.68, n:'BetaLup'   }
     ];
     // alt/az 캐시 (매 프레임 갱신)
     var starState = STARS.map(function() { return { altRad: 0, azRad: 0 }; });
+
+    // --- 태양계 행성 (J2000 평균 궤도요소; Meeus-ch31 간이식) ---
+    // 반장반경 AU, 이심률, 궤도경사·승교점·근일점경도 (deg)
+    // L0: 평균경도, nd: 일일 평균운동 (deg/day)
+    var PLANETS = [
+        { n:'Mercury', L0:252.250906, nd:4.092353837, a:0.387098310, e:0.205634283, i:7.004986, Om: 48.330893, wbar: 77.456119, color:0xFFB0A0A0 },
+        { n:'Venus',   L0:181.979801, nd:1.602130374, a:0.723329820, e:0.006771882, i:3.394662, Om: 76.679920, wbar:131.563707, color:0xFFE8F0F8 },
+        { n:'Mars',    L0:355.433000, nd:0.524033017, a:1.523679342, e:0.093392770, i:1.849726, Om: 49.558093, wbar:336.060234, color:0xFF4040FF },
+        { n:'Jupiter', L0: 34.351519, nd:0.083091379, a:5.202603191, e:0.048494832, i:1.303270, Om:100.464407, wbar: 14.331207, color:0xFF80C0E8 },
+        { n:'Saturn',  L0: 50.077444, nd:0.033459652, a:9.554909596, e:0.055508622, i:2.488878, Om:113.665503, wbar: 93.056787, color:0xFF60C0E0 },
+        { n:'Uranus',  L0:314.055005, nd:0.011731294, a:19.218446062, e:0.046381, i:0.773196, Om: 74.005947, wbar:173.005159, color:0xFFE0E080 },
+        { n:'Neptune', L0:304.348665, nd:0.005981841, a:30.110386869, e:0.009456, i:1.769952, Om:131.784057, wbar: 48.123691, color:0xFFE06060 }
+    ];
+    var EARTH = { L0:100.466449, nd:0.985609101, a:1.000000262, e:0.016708634, Om:0, wbar:102.937348, i:0 };
+    var planetState = PLANETS.map(function() { return { altRad: 0, azRad: 0, mag: 0 }; });
+    function heliocentric(el, Tdays) {
+        var DEG = Math.PI / 180;
+        var M = ((el.L0 + el.nd * Tdays - el.wbar) % 360) * DEG;
+        // 뉴턴법 Kepler
+        var E = M + el.e * Math.sin(M);
+        for (var k = 0; k < 4; k++) {
+            E = E - (E - el.e * Math.sin(E) - M) / (1 - el.e * Math.cos(E));
+        }
+        var xOrb = el.a * (Math.cos(E) - el.e);
+        var yOrb = el.a * Math.sqrt(1 - el.e * el.e) * Math.sin(E);
+        var w  = (el.wbar - el.Om) * DEG;
+        var Om = el.Om * DEG;
+        var iR = el.i * DEG;
+        var cosW = Math.cos(w),  sinW = Math.sin(w);
+        var cosO = Math.cos(Om), sinO = Math.sin(Om);
+        var cosI = Math.cos(iR), sinI = Math.sin(iR);
+        // 근일점 → 궤도평면 xy
+        var x1 = cosW * xOrb - sinW * yOrb;
+        var y1 = sinW * xOrb + cosW * yOrb;
+        // 궤도평면 → 황도 평면 (경사)
+        var x2 = x1;
+        var y2 = y1 * cosI;
+        var z2 = y1 * sinI;
+        // 승교점 회전 → 황도 XYZ
+        return {
+            x: cosO * x2 - sinO * y2,
+            y: sinO * x2 + cosO * y2,
+            z: z2
+        };
+    }
+    function updatePlanets(Tdays, gmstH, latRad, lonDeg) {
+        var DEG = Math.PI / 180;
+        var eps = 23.439281 * DEG;
+        var eh = heliocentric(EARTH, Tdays);
+        var lst = gmstH + lonDeg / 15;
+        var sinLat = Math.sin(latRad), cosLat = Math.cos(latRad);
+        for (var i = 0; i < PLANETS.length; i++) {
+            var ph = heliocentric(PLANETS[i], Tdays);
+            var X = ph.x - eh.x;
+            var Y = ph.y - eh.y;
+            var Z = ph.z - eh.z;
+            var dist = Math.sqrt(X*X + Y*Y + Z*Z);
+            // 황도 → 적도
+            var Xe = X;
+            var Ye = Y * Math.cos(eps) - Z * Math.sin(eps);
+            var Ze = Y * Math.sin(eps) + Z * Math.cos(eps);
+            var raRad = Math.atan2(Ye, Xe);
+            if (raRad < 0) raRad += 2 * Math.PI;
+            var decRad = Math.asin(Ze / dist);
+            var raH = raRad * 12 / Math.PI;
+            var H = (lst - raH) * 15 * DEG;
+            var sinDec = Math.sin(decRad), cosDec = Math.cos(decRad);
+            var sinH = Math.sin(H), cosH = Math.cos(H);
+            var sinAlt = sinLat * sinDec + cosLat * cosDec * cosH;
+            if (sinAlt > 1) sinAlt = 1; else if (sinAlt < -1) sinAlt = -1;
+            planetState[i].altRad = Math.asin(sinAlt);
+            var azRad = Math.atan2(-cosDec * sinH, sinDec * cosLat - cosDec * sinLat * cosH);
+            if (azRad < 0) azRad += 2 * Math.PI;
+            planetState[i].azRad = azRad;
+            // 대략적 등급 (거리 기반 근사)
+            planetState[i].mag = [
+                -0.6, -4.2, -1.0, -2.5, 0.4, 5.7, 7.8
+            ][i];
+        }
+    }
+
+    // --- 달 위치 · 위상 (Meeus 간이식) ---
+    var moonState = { altRad: 0, azRad: 0, phase: 0, illumination: 0 };
+    function updateMoon(Tdays, gmstH, latRad, lonDeg) {
+        var DEG = Math.PI / 180;
+        var T = Tdays / 36525;
+        var Lp = (218.3164477 + 481267.88123421 * T) * DEG;
+        var D  = (297.8501921 + 445267.1114034 * T) * DEG;
+        var M  = (357.5291092 +  35999.0502909 * T) * DEG;
+        var Mp = (134.9633964 + 477198.8675055 * T) * DEG;
+        var F  = ( 93.2720950 + 483202.0175233 * T) * DEG;
+        var lambda = Lp
+            + 6.289 * DEG * Math.sin(Mp)
+            - 1.274 * DEG * Math.sin(Mp - 2 * D)
+            + 0.658 * DEG * Math.sin(2 * D)
+            + 0.214 * DEG * Math.sin(2 * Mp)
+            - 0.186 * DEG * Math.sin(M)
+            - 0.114 * DEG * Math.sin(2 * F);
+        var beta = 5.128 * DEG * Math.sin(F)
+            + 0.281 * DEG * Math.sin(Mp + F)
+            - 0.278 * DEG * Math.sin(F - Mp)
+            - 0.173 * DEG * Math.sin(F - 2 * D);
+        var eps = 23.439281 * DEG;
+        var cosL = Math.cos(lambda), sinL = Math.sin(lambda);
+        var cosB = Math.cos(beta), sinB = Math.sin(beta);
+        var x = cosL * cosB;
+        var y = sinL * cosB * Math.cos(eps) - sinB * Math.sin(eps);
+        var z = sinL * cosB * Math.sin(eps) + sinB * Math.cos(eps);
+        var raRad = Math.atan2(y, x);
+        if (raRad < 0) raRad += 2 * Math.PI;
+        var decRad = Math.asin(z);
+        var raH = raRad * 12 / Math.PI;
+        var lst = gmstH + lonDeg / 15;
+        var H = (lst - raH) * 15 * DEG;
+        var sinLat = Math.sin(latRad), cosLat = Math.cos(latRad);
+        var sinDec = Math.sin(decRad), cosDec = Math.cos(decRad);
+        var sinH = Math.sin(H), cosH = Math.cos(H);
+        var sinAlt = sinLat * sinDec + cosLat * cosDec * cosH;
+        if (sinAlt > 1) sinAlt = 1; else if (sinAlt < -1) sinAlt = -1;
+        moonState.altRad = Math.asin(sinAlt);
+        var azRad = Math.atan2(-cosDec * sinH, sinDec * cosLat - cosDec * sinLat * cosH);
+        if (azRad < 0) azRad += 2 * Math.PI;
+        moonState.azRad = azRad;
+        // 위상 (태양-달 황경 차이의 근사)
+        var phaseRad = (D) % (2 * Math.PI);  // D = moon-sun elongation 평균
+        if (phaseRad < 0) phaseRad += 2 * Math.PI;
+        moonState.phase = phaseRad;   // 0 신월, π 보름
+        moonState.illumination = (1 - Math.cos(phaseRad)) / 2;
+    }
     window.__stars = STARS;
     window.__starState = starState;
+    window.__planets = PLANETS;
+    window.__planetState = planetState;
+    window.__moonState = moonState;
 
     // --- Weather (구름·시정) ---
     // cloudiness 0..1, visibilityCoef 0.5..1.0 (시정 거리 배율)
@@ -729,6 +872,8 @@
             starState[i].altRad = altRad;
             starState[i].azRad = azRad;
         }
+        updatePlanets(Tdays, gmst, latRad, sun.lon);
+        updateMoon(Tdays, gmst, latRad, sun.lon);
     }
     // debug: camera 전역 접근
 
@@ -1034,6 +1179,70 @@
                     blendPx(sxs + 2, sys + 2, alpha * 0.4);
                     blendPx(sxs + 2, sys - 1, alpha * 0.4);
                     blendPx(sxs - 1, sys + 2, alpha * 0.4);
+                }
+            }
+        }
+
+        // --- Planets (별과 같은 조건: 밤·황혼) ---
+        if (sun.altDeg < 5) {
+            var pFade = (5 - sun.altDeg) / 5;
+            if (pFade > 1) pFade = 1;
+            pFade *= (1 - weather.cloudiness * 0.8);
+            for (var pi = 0; pi < PLANETS.length; pi++) {
+                var ps = planetState[pi];
+                if (ps.altRad < 0) continue;
+                var dltp = ps.azRad + camera.angle;
+                dltp = ((dltp + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+                if (Math.abs(dltp) > Math.PI / 2) continue;
+                var ppx = (SCR_W / 2 + dltp * PX_PER_RAD_H) | 0;
+                var ppy = (camera.horizon - ps.altRad * (camera.horizon / (Math.PI / 2))) | 0;
+                if (ppx < 1 || ppx >= SCR_W - 1 || ppy < 1 || ppy >= SCR_H - 1) continue;
+                var pmag = ps.mag;
+                // 맨눈 한계 ~6. 천왕성(5.7)/해왕성(7.8)은 거의 안 보임. 보여도 작게.
+                if (pmag > 6) continue;
+                var c = PLANETS[pi].color;
+                // 밝은 행성(금성·목성)은 십자 + 중심
+                if (pmag < -1) {
+                    buf32[ppy * SCR_W + ppx] = c;
+                    buf32[ppy * SCR_W + (ppx - 1)] = c;
+                    buf32[ppy * SCR_W + (ppx + 1)] = c;
+                    buf32[(ppy - 1) * SCR_W + ppx] = c;
+                    buf32[(ppy + 1) * SCR_W + ppx] = c;
+                    buf32[(ppy - 1) * SCR_W + (ppx - 1)] = c;
+                    buf32[(ppy + 1) * SCR_W + (ppx + 1)] = c;
+                } else {
+                    buf32[ppy * SCR_W + ppx] = c;
+                    buf32[ppy * SCR_W + (ppx + 1)] = c;
+                    buf32[(ppy + 1) * SCR_W + ppx] = c;
+                }
+            }
+        }
+
+        // --- Moon (위상 반영, 낮에도 보임) ---
+        if (moonState.altRad > 0) {
+            var dlm = moonState.azRad + camera.angle;
+            dlm = ((dlm + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+            if (Math.abs(dlm) < Math.PI / 2) {
+                var mx = (SCR_W / 2 + dlm * PX_PER_RAD_H) | 0;
+                var my = (camera.horizon - moonState.altRad * (camera.horizon / (Math.PI / 2))) | 0;
+                var MR = 5;
+                var ill = moonState.illumination;
+                var side = Math.sin(moonState.phase) >= 0 ? 1 : -1;
+                var bright = 0xFFE8F0F4;  // 밝은 면
+                var dark   = 0xFF404050;  // 어두운 면 (하늘 색보다 약간 밝게)
+                for (var dym = -MR; dym <= MR; dym++) {
+                    for (var dxm = -MR; dxm <= MR; dxm++) {
+                        if (dxm * dxm + dym * dym > MR * MR) continue;
+                        var lxm = mx + dxm, lym = my + dym;
+                        if (lxm < 0 || lxm >= SCR_W || lym < 0 || lym >= SCR_H) continue;
+                        var normX = dxm / MR;
+                        var termX = side * (1 - 2 * ill);
+                        var lit;
+                        if (ill >= 0.97) lit = true;
+                        else if (ill <= 0.03) lit = false;
+                        else lit = (side > 0 ? normX > termX : normX < termX);
+                        buf32[lym * SCR_W + lxm] = lit ? bright : dark;
+                    }
                 }
             }
         }
@@ -1431,6 +1640,50 @@
                 ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
                 ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
             }
+        }
+
+        // 행성 (낮엔 금성·목성 빼고 흐림. 그래도 알기 쉽게 색 유지)
+        for (var pi = 0; pi < PLANETS.length; pi++) {
+            var ps = planetState[pi];
+            if (ps.altRad < 0) continue;
+            if (ps.mag > 6) continue;  // 천왕성/해왕성 맨눈 한계 넘음
+            var dltp = ps.azRad + camera.angle;
+            var rp = (Math.PI / 2 - ps.altRad) / (Math.PI / 2) * R;
+            var ppx = cx + Math.sin(dltp) * rp;
+            var ppy = cy - Math.cos(dltp) * rp;
+            var col = PLANETS[pi].color;
+            var cR = col & 0xFF, cG = (col >> 8) & 0xFF, cB = (col >> 16) & 0xFF;
+            var pAlpha = 0.9;
+            if (sun.altDeg > 0 && ps.mag > -1) pAlpha = 0.35;  // 낮엔 어두운 행성 흐리게
+            var psize = ps.mag < -3 ? 3 : ps.mag < 0 ? 2.5 : ps.mag < 2 ? 2 : 1.5;
+            ctx.fillStyle = 'rgba(' + cR + ',' + cG + ',' + cB + ',' + pAlpha + ')';
+            ctx.beginPath(); ctx.arc(ppx, ppy, psize, 0, Math.PI * 2); ctx.fill();
+        }
+
+        // 달 (낮에도 표시, 위상 반영)
+        if (moonState.altRad > 0) {
+            var dlm = moonState.azRad + camera.angle;
+            var rm = (Math.PI / 2 - moonState.altRad) / (Math.PI / 2) * R;
+            var mmx = cx + Math.sin(dlm) * rm;
+            var mmy = cy - Math.cos(dlm) * rm;
+            var MR2 = 7;
+            var ill2 = moonState.illumination;
+            var side2 = Math.sin(moonState.phase) >= 0 ? 1 : -1;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(mmx, mmy, MR2, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.fillStyle = 'rgb(60, 65, 80)';
+            ctx.fillRect(mmx - MR2, mmy - MR2, MR2 * 2, MR2 * 2);
+            ctx.fillStyle = 'rgb(240, 245, 250)';
+            if (ill2 >= 0.97) {
+                ctx.fillRect(mmx - MR2, mmy - MR2, MR2 * 2, MR2 * 2);
+            } else if (ill2 > 0.03) {
+                var t = side2 * (1 - 2 * ill2) * MR2;
+                if (side2 > 0) ctx.fillRect(mmx + t, mmy - MR2, MR2 - t, MR2 * 2);
+                else           ctx.fillRect(mmx - MR2, mmy - MR2, MR2 + t, MR2 * 2);
+            }
+            ctx.restore();
         }
 
         // 천정 마커 + 배 방향 화살표 (화면 위쪽 = 배가 향한 곳)
