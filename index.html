@@ -55,7 +55,7 @@
 <body>
 <div id="loading">지형 데이터 로딩 중...</div>
 <canvas id="c"></canvas>
-<div id="hud">W·S 전진/후진 │ A·D 회전 │ Q·E 시선</div>
+<div id="hud">W·S 전진/후진 │ A·D 회전</div>
 <div id="debug"></div>
 
 <script>
@@ -84,6 +84,15 @@
     var SIZE  = 1 << SHIFT;
     var MASK  = SIZE - 1;
 
+    // Geo 메타 (tile_index.json 일치) — 월드 픽셀 → 위/경도 변환용
+    var ORIGIN_LON = -180;
+    var ORIGIN_LAT = 90;
+    var DEG_PER_PIXEL = 2.1333333333333333 / 512;  // deg_per_tile / tile_size
+
+    // 시간 가속: 1초 실시간 = 120초 게임시간 ⇒ 하루 = 12분. T/Y 키로 조절
+    var TIME_SPEED = 120;
+    var TIME_SPEED_MIN = 1, TIME_SPEED_MAX = 7200;
+
     // --- Canvas ---
     var canvas = document.getElementById('c');
     var ctx = canvas.getContext('2d');
@@ -111,15 +120,32 @@
     var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
     var FOG_LAND_R = 90,  FOG_LAND_G = 100, FOG_LAND_B = 120;
 
-    // Precompute sky gradient row colors
+    // Sky palette — zenith(천정) / horizon(지평) RGB, 낮/황혼/밤 3단
+    var SKY_DAY_Z   = [ 60,  90, 170], SKY_DAY_H   = [160, 185, 210];
+    var SKY_DUSK_Z  = [ 42,  24,  64], SKY_DUSK_H  = [255, 144,  80];
+    var SKY_NIGHT_Z = [  6,   8,  28], SKY_NIGHT_H = [ 12,  16,  40];
     var skyRow = new Uint32Array(SCR_H);
-    for (var sy = 0; sy < SCR_H; sy++) {
-        var t = sy / SCR_H;
-        var sr = 60 + 100 * t | 0;
-        var sg = 90 + 95  * t | 0;
-        var sb = 170 + 40 * t | 0;
-        skyRow[sy] = 0xFF000000 | (sb << 16) | (sg << 8) | sr;
+
+    // 태양 고도(deg)에 따라 skyRow 재계산
+    function updateSky(altDeg) {
+        var dayW   = (altDeg - 5) / 10;     if (dayW < 0) dayW = 0;   else if (dayW > 1) dayW = 1;
+        var nightW = (-6 - altDeg) / 6;     if (nightW < 0) nightW = 0; else if (nightW > 1) nightW = 1;
+        var duskW  = 1 - dayW - nightW;     if (duskW < 0) duskW = 0;
+        var zR = SKY_DAY_Z[0]*dayW + SKY_DUSK_Z[0]*duskW + SKY_NIGHT_Z[0]*nightW;
+        var zG = SKY_DAY_Z[1]*dayW + SKY_DUSK_Z[1]*duskW + SKY_NIGHT_Z[1]*nightW;
+        var zB = SKY_DAY_Z[2]*dayW + SKY_DUSK_Z[2]*duskW + SKY_NIGHT_Z[2]*nightW;
+        var hR = SKY_DAY_H[0]*dayW + SKY_DUSK_H[0]*duskW + SKY_NIGHT_H[0]*nightW;
+        var hG = SKY_DAY_H[1]*dayW + SKY_DUSK_H[1]*duskW + SKY_NIGHT_H[1]*nightW;
+        var hB = SKY_DAY_H[2]*dayW + SKY_DUSK_H[2]*duskW + SKY_NIGHT_H[2]*nightW;
+        for (var sy = 0; sy < SCR_H; sy++) {
+            var t = sy / SCR_H;
+            var r = zR + (hR - zR) * t | 0;
+            var g = zG + (hG - zG) * t | 0;
+            var b = zB + (hB - zB) * t | 0;
+            skyRow[sy] = 0xFF000000 | (b << 16) | (g << 8) | r;
+        }
     }
+    updateSky(45); // 초기값 (낮)
 
     // --- 구간별 선형 매핑 (piecewise linear) ---
     // Uint8 값 → 실제 미터 역변환 LUT (렌더링 시 구간별 scale 보정)
@@ -337,9 +363,9 @@
         tmpC.width = TILE_SIZE; tmpC.height = TILE_SIZE;
         tmpCtx = tmpC.getContext('2d');
 
-        // 2. 시작 위치: 제주도 근처 (src window 73060 13084 + offset)
-        //    글로벌 (73572, 13996) = 제주 남쪽 바다
-        var startGx = 73572, startGy = 13996;
+        // 2. 시작 위치: 북위 24°, 경도 126.55°E (하지 태양이 천정 지나는 위도 근처)
+        //    gy = (ORIGIN_LAT - 24) / DEG_PER_PIXEL = 66 * 240 = 15840
+        var startGx = 73572, startGy = 15840;
 
         // 3. 초기 5x5 타일 로드 (완료 대기)
         var startTx = Math.floor(startGx / TILE_SIZE);
@@ -389,7 +415,7 @@
 
     // --- Boat (플레이어 조종 대상) ---
     // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H)
-    var boat = { gx: window.__startGx, gy: window.__startGy, angle: 0.0 };
+    var boat = { gx: window.__startGx, gy: window.__startGy, angle: Math.PI };
     window.__boat = boat; // 디버그: 외부에서 위치 조작
 
     // --- Camera (3인칭: 배 뒤에서 추적) ---
@@ -400,7 +426,7 @@
         x: boat.gx, y: boat.gy,
         heightMeters: BASE_CAM_METERS,
         angle: 0.0,
-        horizon: 120,
+        horizon: 180,
         distance: 800
     };
     window.__camera = camera;
@@ -408,12 +434,62 @@
     // --- Input ---
     var input = {
         forwardbackward: 0,
-        leftright: 0,
-        lookup: false,
-        lookdown: false
+        leftright: 0
     };
 
     var time = new Date().getTime();
+
+    // --- Sun / Game time state ---
+    // 시뮬 시각 (ms). 하지(6/21) 로컬 solar 정오 시작
+    //   utcH = 12 - lon/15 = 12 - 126.55/15 ≈ 3.56 ⇒ 03:34 UTC
+    var gameTime = Date.UTC(new Date().getUTCFullYear(), 5, 21, 3, 34, 0);
+    var sun = {
+        lat: 0, lon: 0,
+        altDeg: 45, azDeg: 180,
+        altRad: 0, azRad: 0,
+        dayOfYear: 0, hourLocal: 12
+    };
+    window.__sun = sun;
+
+    function computeSun() {
+        // 보트 위치 → 위/경도
+        var lat = ORIGIN_LAT - boat.gy * DEG_PER_PIXEL;
+        var lon = ORIGIN_LON + boat.gx * DEG_PER_PIXEL;
+        lon = ((lon + 180) % 360 + 360) % 360 - 180;
+        sun.lat = lat;
+        sun.lon = lon;
+
+        var d = new Date(gameTime);
+        var yearStart = Date.UTC(d.getUTCFullYear(), 0, 0);
+        var dayOfYear = Math.floor((gameTime - yearStart) / 86400000);
+
+        // 태양 적위 (declination) — 근사식
+        var dec = 23.44 * Math.PI/180 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
+
+        // 로컬 태양시 (경도 보정, 시정차 무시)
+        var utcH = d.getUTCHours() + d.getUTCMinutes()/60 + d.getUTCSeconds()/3600;
+        var solarH = utcH + lon / 15;
+        var H = (solarH - 12) * 15 * Math.PI/180;  // 시간각 (rad)
+
+        var latRad = lat * Math.PI/180;
+        var sinAlt = Math.sin(latRad) * Math.sin(dec) + Math.cos(latRad) * Math.cos(dec) * Math.cos(H);
+        if (sinAlt > 1) sinAlt = 1; else if (sinAlt < -1) sinAlt = -1;
+        var altRad = Math.asin(sinAlt);
+        // 방위: 0=북, π/2=동 (표준)
+        var azRad = Math.atan2(
+            -Math.cos(dec) * Math.sin(H),
+             Math.sin(dec) * Math.cos(latRad) - Math.cos(dec) * Math.sin(latRad) * Math.cos(H)
+        );
+        if (azRad < 0) azRad += 2 * Math.PI;
+
+        sun.altRad = altRad;
+        sun.azRad = azRad;
+        sun.altDeg = altRad * 180/Math.PI;
+        sun.azDeg = azRad * 180/Math.PI;
+        sun.dayOfYear = dayOfYear;
+        sun.hourLocal = ((solarH % 24) + 24) % 24;
+    }
+    computeSun();
 
     // --- Key handlers ---
     // 회전(A/D) / 이동(W/S) 둘 다 키 누를 때마다 이산 1 단위 변화.
@@ -463,8 +539,6 @@
                 break;
             case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
             case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
-            case 81: input.lookup   = true; break;           // Q
-            case 69: input.lookdown = true; break;           // E
             case 187: // '=' / '+' : 미니맵 확대
                 minimapStride = Math.max(MM_STRIDE_MIN, minimapStride / 1.5);
                 break;
@@ -483,16 +557,18 @@
             case 221: // ']' : 회전 속도 ×2
                 ROT_STEP = Math.min(ROT_STEP_MAX, ROT_STEP * 2);
                 break;
+            case 84: // 'T' : 시간 감속 ÷2
+                TIME_SPEED = Math.max(TIME_SPEED_MIN, TIME_SPEED / 2);
+                break;
+            case 89: // 'Y' : 시간 가속 ×2
+                TIME_SPEED = Math.min(TIME_SPEED_MAX, TIME_SPEED * 2);
+                break;
         }
         e.preventDefault();
         return false;
     };
 
     document.onkeyup = function(e) {
-        switch (e.keyCode) {
-            case 81: input.lookup   = false; break;
-            case 69: input.lookdown = false; break;
-        }
         return false;
     };
 
@@ -512,12 +588,70 @@
     }
 
     // --- DrawBackground ---
+    // 수평: FOV 90° ⇒ 45° = 화면 절반(±320px).
+    // 수직: 고도 선형 매핑 (천정까지 등속).
+    //   alt=0°  ⇒ screenY = horizon
+    //   alt=90° ⇒ screenY = 0 (천정 = 화면 상단)
+    var PX_PER_RAD_H = SCR_W / (Math.PI / 2);
+
     function DrawBackground() {
+        updateSky(sun.altDeg);
         for (var y = 0; y < SCR_H; y++) {
             var c = skyRow[y];
             var base = y * SCR_W;
             for (var x = 0; x < SCR_W; x++) {
                 buf32[base + x] = c;
+            }
+        }
+
+        // --- Sun disk ---
+        // 카메라 heading(표준 0=북, 시계) = -camera.angle
+        // delta = sunAz - cam_heading = sunAz + camera.angle   (표준 방위계에서)
+        var delta = sun.azRad + camera.angle;
+        delta = ((delta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        if (sun.altDeg > -2 && Math.abs(delta) < Math.PI / 2) {
+            var sxC = (SCR_W / 2 + delta * PX_PER_RAD_H) | 0;
+            var syC = (camera.horizon - sun.altRad * (camera.horizon / (Math.PI / 2))) | 0;
+            // 태양색 (고도 기준): 높으면 연노랑/흰, 낮으면 주황
+            var sR, sG, sB;
+            if (sun.altDeg > 15) {
+                sR = 255; sG = 245; sB = 220;
+            } else if (sun.altDeg > 0) {
+                var tt = sun.altDeg / 15;
+                sR = 255;
+                sG = 150 + (95 * tt) | 0;
+                sB =  90 + (130 * tt) | 0;
+            } else {
+                sR = 240; sG = 120; sB = 70;
+            }
+            var sunColor = 0xFF000000 | (sB << 16) | (sG << 8) | sR;
+            var R = 6, R2 = R * R;
+            var HR = 320, HR2 = HR * HR;  // halo 반경 (태양의 약 53배)
+            // 바깥 halo → 안쪽 디스크 순 (halo 그린 후 디스크로 덮어쓰기)
+            for (var dy = -HR; dy <= HR; dy++) {
+                var ly = syC + dy;
+                if (ly < 0 || ly >= SCR_H) continue;
+                for (var dxs = -HR; dxs <= HR; dxs++) {
+                    var d2 = dxs * dxs + dy * dy;
+                    if (d2 > HR2) continue;
+                    var lx = sxC + dxs;
+                    if (lx < 0 || lx >= SCR_W) continue;
+                    var idx = ly * SCR_W + lx;
+                    if (d2 <= R2) {
+                        buf32[idx] = sunColor;
+                    } else {
+                        // 후광: R → HR 구간 알파 quadratic falloff
+                        var d = Math.sqrt(d2);
+                        var t = (d - R) / (HR - R);
+                        var a = (1 - t) * (1 - t);
+                        var bg = buf32[idx];
+                        var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
+                        var nR = (bR + (sR - bR) * a) | 0;
+                        var nG = (bG + (sG - bG) * a) | 0;
+                        var nB = (bB + (sB - bB) * a) | 0;
+                        buf32[idx] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+                    }
+                }
             }
         }
     }
@@ -651,17 +785,22 @@
     // --- UpdateCamera (배 조종 → 카메라 추적) ---
     function UpdateCamera() {
         var current = new Date().getTime();
-        var dt = (current - time) * 0.03;
+        var dtMs = current - time;
+
+        // 게임 시간 누적 (TIME_SPEED 배속)
+        gameTime += dtMs * TIME_SPEED;
 
         // 이동은 이산 입력 이벤트에서 moveBoat()로 처리 (연속 이동 없음)
-        if (input.lookup)   camera.horizon += 4 * dt;
-        if (input.lookdown)  camera.horizon -= 4 * dt;
+        // 시선 고정 — 화면 상단(row 0) = alt 90° (천정), horizon = SCR_H/2 = 180
 
         // 카메라 = 배 위치에 즉시 snap. smoothing 제거 → 이동/회전 시
         // 뷰가 배에 정확히 고정되어 "보이는 배 기준" 조종감 유지.
         camera.x = boat.gx;
         camera.y = boat.gy;
         camera.angle = boat.angle;
+
+        // 태양 위치 갱신 (위/경도 + 게임 시각 기반)
+        computeSun();
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
         var camoff = ((Math.floor(camera.y) & MASK) << SHIFT) + (Math.floor(camera.x) & MASK) | 0;
@@ -792,9 +931,17 @@
         var loaded = 0;
         for (var si = 0; si < slotTiles.length; si++) if (slotTiles[si] !== null) loaded++;
         var windDeg = (wind.angleRad * 180 / Math.PI) % 360;
+        var latStr = Math.abs(sun.lat).toFixed(2) + '°' + (sun.lat >= 0 ? 'N' : 'S');
+        var lonStr = Math.abs(sun.lon).toFixed(2) + '°' + (sun.lon >= 0 ? 'E' : 'W');
+        var hh = Math.floor(sun.hourLocal);
+        var mm = Math.floor((sun.hourLocal - hh) * 60);
+        var hhmm = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
         debugEl.textContent =
             'Tile:    ' + tx + ',' + ty + ' (slot ' + slot + ')\n' +
             'Pos:     ' + (boat.gx | 0) + ',' + (boat.gy | 0) + '\n' +
+            'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
+            'Time:    Day ' + sun.dayOfYear + '  ' + hhmm + '  (x' + TIME_SPEED + ')\n' +
+            'Sun:     alt ' + sun.altDeg.toFixed(0) + '°, az ' + sun.azDeg.toFixed(0) + '°\n' +
             'Ang:     ' + (angDeg | 0) + '°\n' +
             'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
             'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
