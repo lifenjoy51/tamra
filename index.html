@@ -523,6 +523,66 @@
         wave.ripple.amp = 0.4 * ampF;
     }
     window.__wave = wave;
+
+    // --- 별 데이터 (밝은 별 ~25개, J2000 기준 RA hours / Dec deg / 겉보기 등급) ---
+    var STARS = [
+        { ra: 6.752, dec:-16.72, mag:-1.46, n:'Sirius'    },
+        { ra: 6.399, dec:-52.70, mag:-0.74, n:'Canopus'   },
+        { ra:14.660, dec:-60.83, mag:-0.27, n:'AlphaCen'  },
+        { ra:14.261, dec: 19.18, mag:-0.05, n:'Arcturus'  },
+        { ra:18.616, dec: 38.78, mag: 0.03, n:'Vega'      },
+        { ra: 5.278, dec: 45.99, mag: 0.08, n:'Capella'   },
+        { ra: 5.242, dec: -8.20, mag: 0.13, n:'Rigel'     },
+        { ra: 7.655, dec:  5.22, mag: 0.38, n:'Procyon'   },
+        { ra: 5.919, dec:  7.41, mag: 0.50, n:'Betelgeuse'},
+        { ra: 1.629, dec:-57.24, mag: 0.45, n:'Achernar'  },
+        { ra:14.064, dec:-60.37, mag: 0.61, n:'Hadar'     },
+        { ra:19.846, dec:  8.87, mag: 0.77, n:'Altair'    },
+        { ra:12.443, dec:-63.10, mag: 0.77, n:'Acrux'     },
+        { ra: 4.599, dec: 16.51, mag: 0.85, n:'Aldebaran' },
+        { ra:16.490, dec:-26.43, mag: 1.06, n:'Antares'   },
+        { ra:13.420, dec:-11.16, mag: 1.04, n:'Spica'     },
+        { ra: 7.755, dec: 28.03, mag: 1.14, n:'Pollux'    },
+        { ra:22.961, dec:-29.62, mag: 1.16, n:'Fomalhaut' },
+        { ra:20.691, dec: 45.28, mag: 1.25, n:'Deneb'     },
+        { ra:12.795, dec:-59.69, mag: 1.25, n:'Mimosa'    },
+        { ra:10.140, dec: 11.97, mag: 1.35, n:'Regulus'   },
+        { ra: 2.530, dec: 89.26, mag: 1.98, n:'Polaris'   },
+        // 오리온 벨트 (별자리 식별용)
+        { ra: 5.679, dec: -1.94, mag: 1.74, n:'Alnitak'   },
+        { ra: 5.603, dec: -1.20, mag: 1.69, n:'Alnilam'   },
+        { ra: 5.533, dec: -0.30, mag: 2.23, n:'Mintaka'   },
+        // 남십자 나머지
+        { ra:12.519, dec:-57.11, mag: 1.63, n:'Gacrux'    }
+    ];
+    // alt/az 캐시 (매 프레임 갱신)
+    var starState = STARS.map(function() { return { altRad: 0, azRad: 0 }; });
+    window.__stars = STARS;
+    window.__starState = starState;
+    function updateStars() {
+        // J2000 = 2000-01-01 12:00 UTC = Unix ms 946728000000. T in days from J2000.
+        var Tdays = (gameTime / 86400000) - 10957.5;
+        // GMST (hours)
+        var gmst = 18.697374558 + 24.06570982441908 * Tdays;
+        // LST (hours) — 경도 보정
+        var lst = gmst + sun.lon / 15;
+        var latRad = sun.lat * Math.PI / 180;
+        var sinLat = Math.sin(latRad), cosLat = Math.cos(latRad);
+        for (var i = 0; i < STARS.length; i++) {
+            var s = STARS[i];
+            var decRad = s.dec * Math.PI / 180;
+            var H = (lst - s.ra) * 15 * Math.PI / 180;  // 시간각 rad
+            var sinDec = Math.sin(decRad), cosDec = Math.cos(decRad);
+            var sinH = Math.sin(H), cosH = Math.cos(H);
+            var sinAlt = sinLat * sinDec + cosLat * cosDec * cosH;
+            if (sinAlt > 1) sinAlt = 1; else if (sinAlt < -1) sinAlt = -1;
+            var altRad = Math.asin(sinAlt);
+            var azRad = Math.atan2(-cosDec * sinH, sinDec * cosLat - cosDec * sinLat * cosH);
+            if (azRad < 0) azRad += 2 * Math.PI;
+            starState[i].altRad = altRad;
+            starState[i].azRad = azRad;
+        }
+    }
     // debug: camera 전역 접근
 
     // --- Boat (플레이어 조종 대상) ---
@@ -765,6 +825,65 @@
             }
         }
 
+        // --- Stars ---
+        // 태양 고도 0° → 별 숨김, -12° 이하 → 완전한 밤
+        if (sun.altDeg < 0) {
+            var darkness = (-sun.altDeg) / 12;
+            if (darkness > 1) darkness = 1;
+            for (var si = 0; si < STARS.length; si++) {
+                var star = STARS[si];
+                var st = starState[si];
+                if (st.altRad < 0) continue;  // 지평선 아래
+                // 카메라 시야 체크
+                var dlt = st.azRad + camera.angle;
+                dlt = ((dlt + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+                if (Math.abs(dlt) > Math.PI / 2) continue;
+                var sxs = (SCR_W / 2 + dlt * PX_PER_RAD_H) | 0;
+                var sys = (camera.horizon - st.altRad * (camera.horizon / (Math.PI / 2))) | 0;
+                if (sxs < 0 || sxs >= SCR_W || sys < 0 || sys >= SCR_H) continue;
+                // 밝기 — magnitude 낮을수록 밝음
+                var magBright = (3.5 - star.mag) / 3;
+                if (magBright < 0.5) magBright = 0.5;
+                else if (magBright > 1.2) magBright = 1.2;
+                var alpha = darkness * magBright;
+                var blendPx = function (lx, ly, a) {
+                    if (lx < 0 || lx >= SCR_W || ly < 0 || ly >= SCR_H) return;
+                    if (a > 1) a = 1;
+                    var idx = ly * SCR_W + lx;
+                    var bg = buf32[idx];
+                    var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
+                    var nR = (bR + (255 - bR) * a) | 0;
+                    var nG = (bG + (255 - bG) * a) | 0;
+                    var nB = (bB + (250 - bB) * a) | 0;
+                    buf32[idx] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+                };
+                // 중심: 밤일 때 순백 직접 덮어쓰기로 확실한 가시성
+                if (alpha > 0.5 && sxs >= 0 && sxs < SCR_W && sys >= 0 && sys < SCR_H) {
+                    buf32[sys * SCR_W + sxs] = 0xFFFAFAFF;
+                } else {
+                    blendPx(sxs, sys, alpha);
+                }
+                // 2x2 주변 보조
+                blendPx(sxs + 1, sys,     alpha * 0.75);
+                blendPx(sxs,     sys + 1, alpha * 0.75);
+                blendPx(sxs + 1, sys + 1, alpha * 0.55);
+                // 밝은 별 (mag < 1) — 크로스 확장
+                if (star.mag < 1.0) {
+                    blendPx(sxs - 1, sys,     alpha * 0.6);
+                    blendPx(sxs + 2, sys,     alpha * 0.5);
+                    blendPx(sxs,     sys - 1, alpha * 0.6);
+                    blendPx(sxs,     sys + 2, alpha * 0.5);
+                }
+                // 매우 밝은 별 (mag < 0) — 코너
+                if (star.mag < 0.0) {
+                    blendPx(sxs - 1, sys - 1, alpha * 0.4);
+                    blendPx(sxs + 2, sys + 2, alpha * 0.4);
+                    blendPx(sxs + 2, sys - 1, alpha * 0.4);
+                    blendPx(sxs - 1, sys + 2, alpha * 0.4);
+                }
+            }
+        }
+
         // --- Sun disk ---
         // 카메라 heading(표준 0=북, 시계) = -camera.angle
         // delta = sunAz - cam_heading = sunAz + camera.angle   (표준 방위계에서)
@@ -966,6 +1085,7 @@
         computeSail();
         computeCurrent();
         computeWaves();
+        updateStars();
 
         // 해류 drift: 게임 시간 기준으로 배를 밀어줌 (moveBoat로 해안 충돌 보존)
         //   UNIT_M = 400 m/unit → drift_units = speed_m/s × gameSeconds / 400
