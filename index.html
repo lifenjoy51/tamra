@@ -379,9 +379,7 @@
     window.__boat = boat; // 디버그: 외부에서 위치 조작
 
     // --- Camera (3인칭: 배 뒤에서 추적) ---
-    var CAM_DIST = 5;               // 배 뒤쪽 거리 (map units) — 작을수록 해안 근접감
     var BASE_CAM_METERS = 65;       // 기본 카메라 높이 (meters, ~배 위 시점)
-    var CAM_LAND_MARGIN = 2;        // 스프링암: 육지 만나면 이 간격만큼 앞에서 멈춤
     var CAM_HEIGHT_MARGIN = 20;     // 카메라 아래 지형 있을 때 띄울 여유 (m)
     // camera.x, camera.y는 글로벌 월드 좌표 (렌더 루프에서 & MASK로 버퍼 위치 매핑)
     var camera = {
@@ -641,36 +639,12 @@
         if (input.lookup)   camera.horizon += 2 * dt;
         if (input.lookdown)  camera.horizon -= 2 * dt;
 
-        // 카메라 거리: 배 주변 근처 육지까지의 **최소 거리**로 결정 (각도 무관).
-        // 회전 시 ray 방향에 따라 safeDist가 변하던 문제 제거 — 배가 정지해 있으면
-        // safeDist도 일정 → 회전해도 "배가 앞으로 가는" 느낌 없음.
-        var CAM_MARCH_MAX = CAM_DIST + CAM_LAND_MARGIN;
-        var scanR = Math.ceil(CAM_MARCH_MAX) | 0;
-        var bx = Math.floor(boat.gx) | 0, by = Math.floor(boat.gy) | 0;
-        var fx = boat.gx - bx, fy = boat.gy - by;
-        var minLandDist = Infinity;
-        for (var dy = -scanR; dy <= scanR; dy++) {
-            for (var dx = -scanR; dx <= scanR; dx++) {
-                var off = (((by + dy) & MASK) << SHIFT) + ((bx + dx) & MASK) | 0;
-                if (altitude[off] > SEA) {
-                    // 셀 중심까지의 유클리드 거리 (fractional boat 위치 고려)
-                    var ddx = dx + 0.5 - fx, ddy = dy + 0.5 - fy;
-                    var d = Math.sqrt(ddx * ddx + ddy * ddy);
-                    if (d < minLandDist) minLandDist = d;
-                }
-            }
-        }
-        var safeDist = minLandDist - CAM_LAND_MARGIN;
-        if (safeDist < 0) safeDist = 0;
-        else if (safeDist > CAM_DIST) safeDist = CAM_DIST;
-
-        var dirX = Math.sin(boat.angle);
-        var dirY = Math.cos(boat.angle);
-        var targetX = boat.gx + safeDist * dirX;
-        var targetY = boat.gy + safeDist * dirY;
-        var CAM_SMOOTH = 0.25; // 1.0=즉시, 0=정지
-        camera.x += (targetX - camera.x) * CAM_SMOOTH;
-        camera.y += (targetY - camera.y) * CAM_SMOOTH;
+        // 카메라 = 배 위치 고정 (해안 여부 무관하게 일관된 뷰).
+        // 3x3 해안 버퍼로 배가 항상 육지와 최소 1칸 떨어져 있음이 보장되므로
+        // camera 위치를 boat로 두어도 지형 내부 문제 없음.
+        var CAM_SMOOTH = 0.25;
+        camera.x += (boat.gx - camera.x) * CAM_SMOOTH;
+        camera.y += (boat.gy - camera.y) * CAM_SMOOTH;
         camera.angle = boat.angle;
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
@@ -888,7 +862,6 @@
             'Ang:     ' + (angDeg | 0) + '°\n' +
             'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
             'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
-            'CamDist: ' + CAM_DIST + '\n' +
             'Wind:    ' + (windDeg | 0) + '°\n' +
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
             'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
