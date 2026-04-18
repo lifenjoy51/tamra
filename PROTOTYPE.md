@@ -53,7 +53,7 @@ python3 generate_maps.py
 - `jeju_hires_1024.png` — heightmap (8-bit grayscale, 205KB). 구간별 선형 매핑 적용 완료.
 - `jeju_colormap_1024.png` — colormap (RGB, 361KB). 높이 기반 색상 + 디더링 노이즈.
 - 입력: `jeju_hires_1024.raw` (UInt16, 2MB)
-- `index.html`은 PNG만 로드하며, raw 파일은 불필요
+- 현재 렌더러는 타일(`tiles/`)을 로드하므로 이 PNG들은 쓰지 않음. `--verify` 비교용·초기 개발용 legacy 산출물.
 
 ### 높이 매핑: 구간별 선형 (Piecewise Linear)
 
@@ -147,7 +147,7 @@ projScale = (SCR_H * 0.0044) / z
 ### 레퍼런스 구현에서 가져온 핵심 요소
 
 - **`Math.floor()`**: 맵 좌표 변환 시 `|0` 대신 사용 (음수에서 정확)
-- **별도 ArrayBuffer + `Flip()`**: 더블 버퍼 패턴
+- **별도 ArrayBuffer + 인라인 flip**: `buf32`로 backbuffer 작성 → `DrawBoat`에서 `putImageData`로 canvas에 전송
 - **asm.js 스타일 `|0` 힌트**: DrawVerticalLine 내부 정수 연산 최적화
 
 ### 바다 처리
@@ -165,8 +165,8 @@ projScale = (SCR_H * 0.0044) / z
 
 ### 파도 & 바람
 
-- **파도**: swell/mid/ripple 3개 sin 합성. Render(바다 셀) + FillSea(수평선 아래)에서 동일 파라미터 사용
-- **풍향**: `wind.angleRad` (기본 북동풍 π/4). FillSea 노이즈 블록을 풍향으로 회전시켜, 격자 축이 동서남북으로 정렬되지 않게 함 (방위 치트 방지)
+- **파도**: swell/mid/ripple 3개 sin 합성. Render의 바다 셀 색상 변조에 사용
+- **풍향**: `wind.angleRad` (기본 북동풍 π/4). 현재는 디버그 패널 표시용
 - **배 bob**: swell 위상으로 boat 스프라이트 Y 오프셋 흔들림
 
 ### 항해 물리
@@ -174,7 +174,7 @@ projScale = (SCR_H * 0.0044) / z
 - **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용. 해안선에 붙은 바다 1픽셀도 진입 불가 → 육지와 최소 1칸 간격 유지
 - **서브스텝 이동**: `SUBSTEPS = ceil(mvLen * 4)`로 큰 `MOVE_STEP`에서도 3x3 체크가 통과 중간 셀을 놓치지 않음
 - **카메라 = 배에 snap**: smoothing/spring-arm 없이 `camera.x/y/angle = boat.*` 직접 대입 → 회전 시 배 기준 뷰 고정
-- **카메라 높이**: 기본 `65m`, 지형 위면 `지형높이 + 20m`로 자동 상승
+- **카메라 높이**: 기본 `50m`, 지형 위면 `지형높이 + 20m`로 자동 상승
 - **1회 키 입력 = 1 step**: A/D/W/S는 이산 입력. 브라우저 키 auto-repeat로 연속 효과
 
 ### 프레임 페이싱

@@ -36,9 +36,8 @@ python3 generate_world_tiles.py --verify        # 제주 타일 비교
 s-macke/VoxelSpace 기반 + 확장. Draw 루프 순서:
 
 ```
-UpdateCamera → DrawBackground(sky gradient) → Render(bilinear VS)
-  → FillSea는 현재 사용 안함 (Render가 수평선 위/아래 전부 담당)
-  → DrawMinimap → DrawBoat(Flip + sprite)
+UpdateCamera → DrawBackground(sky gradient) → Render(bilinear VS, 수평선 위/아래 전부 담당)
+  → DrawMinimap → DrawBoat(buf → canvas flip + sprite)
 ```
 
 - **Bilinear 4-이웃 샘플링**: `heightMeters` (occlusion 판정용) 선행 → 통과 픽셀만 color bilinear (앞단 비용 절약)
@@ -59,7 +58,7 @@ UpdateCamera → DrawBackground(sky gradient) → Render(bilinear VS)
 - **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용 (해안선 인접 바다 1픽셀도 차단)
 - **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*4)` — 큰 `MOVE_STEP`에서도 중간 셀 체크 누락 방지
 - **카메라 = 배에 snap**: smoothing/spring-arm 제거. `camera.x/y/angle = boat.*` 직접 대입 → 보이는 배 기준 뷰 고정
-- **카메라 높이**: 기본 `65m`, 지형 위에서 `지형높이 + 20m`로 자동 상승
+- **카메라 높이**: 기본 `50m`, 지형 위에서 `지형높이 + 20m`로 자동 상승
 - **입력**: A/D/W/S는 1키=1스텝 이산. auto-repeat로 연속 효과 (`[`/`]` 회전속도, `,`/`.` 이동속도)
 
 ### 데이터 파이프라인
@@ -84,7 +83,7 @@ UpdateCamera → DrawBackground(sky gradient) → Render(bilinear VS)
 | `SCR_W/H` | 640/360 | 내부 렌더 해상도 |
 | `SEA` | 64 | 해수면 Uint8 값 |
 | `UNIT_M` | 400 | 1 world unit = 400m (한국 위도) |
-| `BASE_CAM_METERS` | 65 | 기본 카메라 높이 |
+| `BASE_CAM_METERS` | 50 | 기본 카메라 높이 |
 | `camera.distance` | 800 | 최대 렌더 거리 |
 | `FRAME_INTERVAL` | 50 | 20fps cap |
 
@@ -94,12 +93,9 @@ UpdateCamera → DrawBackground(sky gradient) → Render(bilinear VS)
 - **asm.js 스타일 `|0` 힌트**: `DrawVerticalLine` 내부 정수 연산 경로에선 유지
 - 이중 버퍼 패턴: `buf32` (Uint32Array) 쓰고 `imagedata.data.set(buf8)` + `putImageData`로 flip
 
-## 작업 규칙 (`/Users/joey51/.claude/CLAUDE.md` 상속)
+## 커밋 prefix
 
-- 요청이 모호하면 질문 먼저. 추측 추가 작업 금지
-- 코드 수정은 요청된 부분만. 자의적 리팩토링 금지
-- 브랜치 `xyz/0000` 패턴이면 커밋 메시지 앞에 `[XYZ-0000]` prefix
-  - 현재 브랜치 `claude/laughing-jones-89fe13` → `[JONES-89fe13]`... 실제 관측된 커밋은 `[JONES-89]` 형식 사용 중. 기존 로그와 맞추려면 `git log --oneline` 확인 후 prefix 결정
+이 저장소의 기존 커밋은 모두 `[JONES-89]` prefix 사용 중. 동일 형식 유지.
 
 ## 알려진 주의점
 

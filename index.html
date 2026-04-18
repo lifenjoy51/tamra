@@ -393,7 +393,7 @@
     window.__boat = boat; // 디버그: 외부에서 위치 조작
 
     // --- Camera (3인칭: 배 뒤에서 추적) ---
-    var BASE_CAM_METERS = 65;       // 기본 카메라 높이 (meters, ~배 위 시점)
+    var BASE_CAM_METERS = 50;       // 기본 카메라 높이 (meters, ~배 위 시점)
     var CAM_HEIGHT_MARGIN = 20;     // 카메라 아래 지형 있을 때 띄울 여유 (m)
     // camera.x, camera.y는 글로벌 월드 좌표 (렌더 루프에서 & MASK로 버퍼 위치 매핑)
     var camera = {
@@ -648,12 +648,6 @@
         }
     }
 
-    // --- Flip (copy backbuffer to canvas) ---
-    function Flip() {
-        imagedata.data.set(buf8);
-        ctx.putImageData(imagedata, 0, 0);
-    }
-
     // --- UpdateCamera (배 조종 → 카메라 추적) ---
     function UpdateCamera() {
         var current = new Date().getTime();
@@ -678,87 +672,6 @@
         ensureTilesLoaded();
 
         time = current;
-    }
-
-    // --- FillSea (수평선 아래 가짜 바다 — 월드 좌표 투영) ---
-    function FillSea() {
-        var startY = camera.horizon + 3 | 0;
-        var wt = wave.time;
-        var sinang = Math.sin(camera.angle);
-        var cosang = Math.cos(camera.angle);
-        var camMeters = camera.heightMeters;
-        // 풍향 회전 (노이즈 격자를 풍향 축으로 돌림 → 치트 불가)
-        var windCos = Math.cos(wind.angleRad);
-        var windSin = Math.sin(wind.angleRad);
-
-        for (var y = startY; y < SCR_H; y++) {
-            var base = y * SCR_W;
-            var dy = y - camera.horizon;
-            if (dy < 1) dy = 1;
-            // 화면 Y → 거리 역산 (VoxelSpace 투영의 역)
-            var z = camMeters * 0.8 / dy;
-
-            // 같은 투영으로 월드 좌표 계산 (Render와 동일)
-            var plx = -cosang * z - sinang * z + camera.x;
-            var ply =  sinang * z - cosang * z + camera.y;
-            var prx =  cosang * z - sinang * z + camera.x;
-            var pry = -sinang * z - cosang * z + camera.y;
-            var ddx = (prx - plx) / SCR_W;
-            var ddy = (pry - ply) / SCR_W;
-
-            // 거리 기반 fog (Render와 동일)
-            var fog = Math.pow(z / camera.distance, 1.2);
-            if (fog > 1) fog = 1;
-            var mf = 1 - fog;
-
-            var wx = plx, wy = ply;
-            var wtInt = (wt * 3) | 0;
-            for (var x = 0; x < SCR_W; x++) {
-                // 월드 좌표 기반 파도 (Render의 파도와 동일한 파라미터)
-                var wv = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
-                       + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
-                       + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
-
-                var wc = wv * 7 | 0;
-
-                // colormap 1회 조회 (바다 깊이별 색 이미 타일 생성 시 베이크됨)
-                var ix = Math.floor(wx) & MASK;
-                var iy = Math.floor(wy) & MASK;
-                var mapoff = (iy << SHIFT) + ix | 0;
-                var r, g, b;
-                if (altitude[mapoff] <= SEA) {
-                    var cmc = colormap[mapoff];
-                    r = (cmc & 0xFF);
-                    g = (cmc >> 8) & 0xFF;
-                    b = (cmc >> 16) & 0xFF;
-                } else {
-                    // 샘플이 육지에 걸린 경우 (해안 정면 90° 근처에서 발생)
-                    // → 인접 연안 색(얕은 바다 shore 색)으로 폴백, 급격한 끊김 방지
-                    r = 120; g = 170; b = 180;
-                }
-                // 월드 좌표 + 풍향 회전 → 블록 축이 바람 방향으로 기울어짐 (방위 치트 방지)
-                var rotWx = wx * windCos - wy * windSin;
-                var rotWy = wx * windSin + wy * windCos;
-                var bx2 = (rotWx * 20) | 0;
-                var by2 = (rotWy * 20) | 0;
-                var nz = (((bx2 * 53 + by2 * 89 + wtInt) ^ (bx2 * 11 + by2 * 7)) & 63) - 31; // -31..31
-                r += wc + nz;
-                g += wc + nz;
-                b += (wc >> 1) + (nz * 0.7 | 0);
-
-                // fog 적용
-                r = r * mf + FOG_SEA_R * fog | 0;
-                g = g * mf + FOG_SEA_G * fog | 0;
-                b = b * mf + FOG_SEA_B * fog | 0;
-                r = r < 0 ? 0 : r > 255 ? 255 : r;
-                g = g < 0 ? 0 : g > 255 ? 255 : g;
-                b = b < 0 ? 0 : b > 255 ? 255 : b;
-                buf32[base + x] = 0xFF000000 | (b << 16) | (g << 8) | r;
-
-                wx += ddx;
-                wy += ddy;
-            }
-        }
     }
 
     // --- DrawMinimap (디버그용, 좌하단) ---
@@ -862,15 +775,12 @@
     // --- Main Draw loop (20fps cap) ---
     // rAF 주기(16.67ms)의 정수배 근처에서 지터로 인한 fps 진동을 막기 위해
     // EPSILON(8ms ≈ rAF 주기 절반)만큼 여유를 주고, lastDrawTime을 now로 리셋.
-    var updaterunning = false;
     var FRAME_INTERVAL = 1000 / 20; // 50ms
     var FRAME_EPSILON = 8;           // rAF 지터 허용 (half-period)
     var lastDrawTime = 0;
     var fpsFrames = 0, fpsStart = 0, fpsCurrent = 0;
-    // Frame time (EMA): Draw 한 번의 전체 소요 시간 (ms). 30fps cap 대기는 미포함.
+    // Frame time (EMA): Draw 한 번의 전체 소요 시간 (ms). 20fps cap 대기는 미포함.
     var frameTimeEma = 0;
-
-    function pad4(n) { n = n | 0; return n < 0 ? String(n) : (n < 10 ? '   ' + n : n < 100 ? '  ' + n : n < 1000 ? ' ' + n : '' + n); }
 
     function UpdateDebug() {
         var tx = Math.floor(boat.gx / TILE_SIZE);
@@ -902,7 +812,6 @@
         if (now - lastDrawTime < FRAME_INTERVAL - FRAME_EPSILON) return;
         lastDrawTime = now;
 
-        updaterunning = true;
         var frameStart = performance.now();
         UpdateCamera();
         wave.time += 0.04;
