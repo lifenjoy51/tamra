@@ -94,20 +94,60 @@ var heightonscreen = (camMeters - terMeters) * projScale + horizon;
 
 ## Voxel Space 렌더러
 
-### 알고리즘 (s-macke/VoxelSpace 동일)
+### 알고리즘 (s-macke/VoxelSpace 기반 + 확장)
 
 1. 카메라에서 수평선 방향으로 광선 발사
-2. 가까운 곳부터 먼 곳까지 순회 (front-to-back)
-3. 각 거리에서 heightmap 샘플링 → 화면 Y좌표로 투영
+2. 가까운 곳부터 먼 곳까지 순회 (front-to-back, `z += deltaz`)
+3. 각 거리에서 heightmap/colormap을 **bilinear 샘플링** → 화면 Y좌표로 투영
 4. `hiddeny[]` 배열로 가려짐(occlusion) 처리
 5. `DrawVerticalLine()`으로 세로 선 그리기
+
+### 내부 해상도 & 캔버스 스케일
+
+- **내부 렌더 해상도**: `640 x 360` (16:9)
+- **PX_SCALE**: 뷰포트에 맞춰 `Math.floor(innerW / 640)`, `Math.floor(innerH / 360)` 중 작은 값으로 정수배 스케일 (1x/2x/3x/4x)
+- `image-rendering: pixelated` + `window.resize` 리스너로 창 크기 변경에 대응, crisp pixel 유지
+
+### Bilinear 샘플링
+
+데이터(512x512 타일)는 그대로 두고 런타임에 4-이웃 보간:
+
+```js
+// px_i = floor(plx), fpx = plx - px_i, ... 4개 오프셋 off00/off10/off01/off11
+var terMeters = heightMeters[a00] * w00 + heightMeters[a10] * w10
+              + heightMeters[a01] * w01 + heightMeters[a11] * w11;
+// occlusion 판정 통과한 픽셀만 색상 bilinear (나머지는 continue)
+```
+
+- 고도(`heightMeters`)는 투영 이전에 선행 계산 (occlusion 판정에 필요)
+- 색상 bilinear은 occlusion 통과 후에만 수행 → 파이프라인 앞단 비용 절약
+- deltaz 초기 `0.5`, step당 `+0.005` 증가 — 근거리는 세밀, 원거리는 완만
+
+### 지구 곡률
+
+먼 지형이 수평선 아래로 휘어져 내려가도록 구면 보정:
+
+```
+drop_m(z) = (z * UNIT_M)² / (2R),  R = 6,371,000m
+```
+
+- `UNIT_M = 400` — `tile_index.json`의 `pixel_deg=0.004167` (15 arc-sec/px)
+  - 한국 위도 기준 Y(위도): 463m/px, X(경도, cos33°): 387m/px → 평균 ~400m로 근사
+- 같은 z에선 column 무관 → loop 바깥에서 1회 계산 후 `terMeters -= curvatureDrop`
+
+### 투영 스케일
+
+```
+projScale = (SCR_H * 0.0044) / z
+```
+
+- `SCR_H`에 비례 → 세로 해상도 변경에도 수직 FOV 일관
+- 기준: 300px에서 `0.44/z` ≈ s-macke 레퍼런스의 `240/z` 계열
 
 ### 레퍼런스 구현에서 가져온 핵심 요소
 
 - **`Math.floor()`**: 맵 좌표 변환 시 `|0` 대신 사용 (음수에서 정확)
-- **Delta time**: `(current - time) * 0.03`으로 프레임률 무관 부드러운 이동
 - **별도 ArrayBuffer + `Flip()`**: 더블 버퍼 패턴
-- **On-demand 렌더링**: 키 입력 시에만 `requestAnimationFrame` 호출
 - **asm.js 스타일 `|0` 힌트**: DrawVerticalLine 내부 정수 연산 최적화
 
 ### 바다 처리
@@ -123,28 +163,51 @@ var heightonscreen = (camMeters - terMeters) * projScale + horizon;
 - **바다** → 하늘색(160,185,210)으로 수렴 (수평선에 자연스럽게 녹음)
 - **육지** → 어두운 회색(90,100,120)으로 수렴 (마라도 사진처럼 어두운 실루엣)
 
+### 파도 & 바람
+
+- **파도**: swell/mid/ripple 3개 sin 합성. Render(바다 셀) + FillSea(수평선 아래)에서 동일 파라미터 사용
+- **풍향**: `wind.angleRad` (기본 북동풍 π/4). FillSea 노이즈 블록을 풍향으로 회전시켜, 격자 축이 동서남북으로 정렬되지 않게 함 (방위 치트 방지)
+- **배 bob**: swell 위상으로 boat 스프라이트 Y 오프셋 흔들림
+
 ### 항해 물리
 
-- 육지 진입 차단 (배는 바다만 이동 가능)
-- 카메라 높이 해수면 고정 (~10m, 배 위 시점)
+- **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용. 해안선에 붙은 바다 1픽셀도 진입 불가 → 육지와 최소 1칸 간격 유지
+- **서브스텝 이동**: `SUBSTEPS = ceil(mvLen * 4)`로 큰 `MOVE_STEP`에서도 3x3 체크가 통과 중간 셀을 놓치지 않음
+- **카메라 = 배에 snap**: smoothing/spring-arm 없이 `camera.x/y/angle = boat.*` 직접 대입 → 회전 시 배 기준 뷰 고정
+- **카메라 높이**: 기본 `65m`, 지형 위면 `지형높이 + 20m`로 자동 상승
+- **1회 키 입력 = 1 step**: A/D/W/S는 이산 입력. 브라우저 키 auto-repeat로 연속 효과
+
+### 프레임 페이싱
+
+- **20fps cap** (`FRAME_INTERVAL = 50ms`). `FRAME_EPSILON = 8ms` 허용 → rAF 주기(16.67ms) 정수배 근처에서 지터로 인한 fps 진동 방지
+- **frame time EMA** (alpha=0.1, ~10프레임 윈도우) — Draw 1회의 순수 계산 시간. cap 대기 시간 미포함 (디버그 패널 `Frame` 필드)
 
 ## 조작법
 
 | 키 | 동작 |
 |---|---|
-| W / ↑ | 전진 |
+| W / ↑ | 전진 (1 MOVE_STEP) |
 | S / ↓ | 후진 |
-| A / ← | 좌회전 |
+| A / ← | 좌회전 (1 ROT_STEP) |
 | D / → | 우회전 |
 | Q | 시선 위로 |
 | E | 시선 아래로 |
+| `,` / `.` | 이동 속도 ÷2 / ×2 (1/16 ~ 64 unit) |
+| `[` / `]` | 회전 속도 ÷2 / ×2 (0.125° ~ 45°) |
+| `-` / `=` | 미니맵 축소 / 확대 |
+
+## 디버그 패널
+
+우하단. `Tile` (좌표+slot), `Pos`, `Ang`, `Alt` (sea/land), `CamH`, `Wind`, `Step`, `Tiles` (슬롯 로드 개수), `MMZoom`, `FPS`, `Frame` (ms EMA).
 
 ## 실행 방법
 
+`.claude/launch.json` 기준:
+
 ```bash
-cd ~/works/heightmap
-python3 -m http.server 8080
-# 브라우저에서 http://localhost:8080 접속
+cd ~/works/tamra
+python3 -m http.server 8089
+# 브라우저에서 http://localhost:8089 접속
 ```
 
 ## 파일 구조
