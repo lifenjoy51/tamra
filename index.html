@@ -50,11 +50,31 @@
             border-radius: 3px;
             pointer-events: none;
         }
+        #canvas-wrap {
+            position: relative;
+        }
+        #gameui {
+            display: none;
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            color: #e8e4d0;
+            font-size: 16px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 3px;
+            pointer-events: none;
+            letter-spacing: 0.5px;
+        }
     </style>
 </head>
 <body>
 <div id="loading">지형 데이터 로딩 중...</div>
-<canvas id="c"></canvas>
+<div id="canvas-wrap">
+    <canvas id="c"></canvas>
+    <div id="gameui"></div>
+</div>
 <div id="hud">W·S 전진/후진 │ A·D 회전</div>
 <div id="debug"></div>
 
@@ -392,6 +412,8 @@
     document.getElementById('loading').style.display = 'none';
     canvas.style.display = 'block';
     document.getElementById('hud').style.display = 'block';
+    var gameUiEl = document.getElementById('gameui');
+    gameUiEl.style.display = 'block';
     var debugEl = document.getElementById('debug');
     debugEl.style.display = 'block';
 
@@ -409,7 +431,8 @@
     // --- Wind (풍향) ---
     // 노이즈 블록 회전 축 → 동서남북으로 네모가 정렬되지 않게 함
     // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
-    var wind = { angleRad: Math.PI / 4 }; // 북동풍
+    // 풍향(angleRad) · 풍속(speedMS) — computeWind()가 매 프레임 갱신
+    var wind = { angleRad: Math.PI / 4, speedMS: 8 };
     window.__wind = wind;
     // debug: camera 전역 접근
 
@@ -447,7 +470,7 @@
         lat: 0, lon: 0,
         altDeg: 45, azDeg: 180,
         altRad: 0, azRad: 0,
-        dayOfYear: 0, hourLocal: 12
+        dayOfYear: 0, hourLocal: 12, month: 1, date: 1, year: 2000
     };
     window.__sun = sun;
 
@@ -488,8 +511,53 @@
         sun.azDeg = azRad * 180/Math.PI;
         sun.dayOfYear = dayOfYear;
         sun.hourLocal = ((solarH % 24) + 24) % 24;
+        sun.month = d.getUTCMonth() + 1;
+        sun.date = d.getUTCDate();
+        sun.year = d.getUTCFullYear();
     }
     computeSun();
+
+    // --- 지역·계절·시간별 바람 (대기 대순환 근사) ---
+    function computeWind() {
+        var lat = sun.lat, lon = sun.lon;
+        var day = sun.dayOfYear, hr = sun.hourLocal;
+
+        // 계절별 위도대 shift (여름 +5°, 겨울 -5°)
+        var shift = 5 * Math.sin(2 * Math.PI * (day - 81) / 365);
+        var eff = lat - shift;
+        var a = Math.abs(eff);
+
+        var dir, spd;
+        if (a < 5)        { dir = eff > 0 ? 45 : 135;   spd = 2;  }   // ITCZ
+        else if (a < 30)  { dir = eff > 0 ? 45 : 135;   spd = 8;  }   // 무역풍
+        else if (a < 35)  { dir = eff > 0 ? 135 : 45;   spd = 3;  }   // 말 위도
+        else if (a < 60)  { dir = eff > 0 ? 225 : 315;  spd = 12; }   // 편서풍
+        else              { dir = eff > 0 ? 45 : 135;   spd = 5;  }   // 극동풍
+
+        // 아시아 몬순 (Indian Ocean / SE Asia)
+        if (lon > 60 && lon < 150 && lat > -20 && lat < 30) {
+            if (day > 120 && day < 270)     { dir = 225; spd = 10; } // SW 몬순
+            else if (day > 300 || day < 60) { dir = 45;  spd = 8;  } // NE 몬순
+        }
+
+        // 해륙풍 근사 (낮/밤 약한 sin 변조)
+        var night = Math.sin(2 * Math.PI * hr / 24);
+        dir += night * 8;
+        spd *= 1 + night * 0.1;
+
+        // 결정적 noise (위치 0.2° + 주 단위 + 년도)
+        var seed = (Math.floor(lat * 5) + Math.floor(lon * 5) * 7 + Math.floor(day / 7) * 13 + sun.year * 31) >>> 0;
+        var n = ((seed * 2654435761) >>> 0) / 4294967295;
+        dir += (n - 0.5) * 30;
+        spd *= 0.7 + n * 0.6;
+
+        dir = ((dir % 360) + 360) % 360;
+        if (spd < 0) spd = 0;
+
+        wind.angleRad = dir * Math.PI / 180;
+        wind.speedMS = spd;
+    }
+    computeWind();
 
     // --- Key handlers ---
     // 회전(A/D) / 이동(W/S) 둘 다 키 누를 때마다 이산 1 단위 변화.
@@ -799,8 +867,9 @@
         camera.y = boat.gy;
         camera.angle = boat.angle;
 
-        // 태양 위치 갱신 (위/경도 + 게임 시각 기반)
+        // 태양·바람 갱신 (위/경도 + 게임 시각 기반)
         computeSun();
+        computeWind();
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
         var camoff = ((Math.floor(camera.y) & MASK) << SHIFT) + (Math.floor(camera.x) & MASK) | 0;
@@ -931,21 +1000,26 @@
         var loaded = 0;
         for (var si = 0; si < slotTiles.length; si++) if (slotTiles[si] !== null) loaded++;
         var windDeg = (wind.angleRad * 180 / Math.PI) % 360;
+        var wDegStr = ((windDeg | 0) + 1000).toString().slice(1);
         var latStr = Math.abs(sun.lat).toFixed(2) + '°' + (sun.lat >= 0 ? 'N' : 'S');
         var lonStr = Math.abs(sun.lon).toFixed(2) + '°' + (sun.lon >= 0 ? 'E' : 'W');
         var hh = Math.floor(sun.hourLocal);
         var mm = Math.floor((sun.hourLocal - hh) * 60);
         var hhmm = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+
+        // 게임 UI: 월/일 + 시:분 (인게임 시각 표시)
+        gameUiEl.textContent = sun.month + '월 ' + sun.date + '일  ' + hhmm;
+
         debugEl.textContent =
             'Tile:    ' + tx + ',' + ty + ' (slot ' + slot + ')\n' +
             'Pos:     ' + (boat.gx | 0) + ',' + (boat.gy | 0) + '\n' +
             'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
-            'Time:    Day ' + sun.dayOfYear + '  ' + hhmm + '  (x' + TIME_SPEED + ')\n' +
+            'Time:    ' + hhmm + '  (x' + TIME_SPEED + ')\n' +
             'Sun:     alt ' + sun.altDeg.toFixed(0) + '°, az ' + sun.azDeg.toFixed(0) + '°\n' +
             'Ang:     ' + (angDeg | 0) + '°\n' +
             'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
             'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
-            'Wind:    ' + (windDeg | 0) + '°\n' +
+            'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
             'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
             'MMZoom:  1:' + minimapStride + '\n' +
