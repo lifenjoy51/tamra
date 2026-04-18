@@ -628,12 +628,10 @@
         if (input.lookup)   camera.horizon += 2 * dt;
         if (input.lookdown)  camera.horizon -= 2 * dt;
 
-        // 카메라 = 배 위치 고정 (해안 여부 무관하게 일관된 뷰).
-        // 3x3 해안 버퍼로 배가 항상 육지와 최소 1칸 떨어져 있음이 보장되므로
-        // camera 위치를 boat로 두어도 지형 내부 문제 없음.
-        var CAM_SMOOTH = 0.25;
-        camera.x += (boat.gx - camera.x) * CAM_SMOOTH;
-        camera.y += (boat.gy - camera.y) * CAM_SMOOTH;
+        // 카메라 = 배 위치에 즉시 snap. smoothing 제거 → 이동/회전 시
+        // 뷰가 배에 정확히 고정되어 "보이는 배 기준" 조종감 유지.
+        camera.x = boat.gx;
+        camera.y = boat.gy;
         camera.angle = boat.angle;
 
         // 카메라 아래 지형이 있으면 그 위로 띄우기 (지형 내부 방지)
