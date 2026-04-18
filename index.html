@@ -61,7 +61,12 @@
 <script>
 (async function() {
     // --- Config ---
-    var SCR_W = 400, SCR_H = 300, PX_SCALE = 3;
+    var SCR_W = 640, SCR_H = 360;  // 16:9 internal
+    // 뷰포트에 정수배로 맞추는 PX_SCALE (crisp pixel 유지)
+    var PX_SCALE = Math.max(1, Math.min(
+        Math.floor(window.innerWidth  / SCR_W),
+        Math.floor(window.innerHeight / SCR_H)
+    ));
     var SEA = 64;             // 해수면 (0m = 출력값 64)
 
     // 타일 시스템
@@ -84,8 +89,17 @@
     var ctx = canvas.getContext('2d');
     canvas.width = SCR_W;
     canvas.height = SCR_H;
-    canvas.style.width  = SCR_W * PX_SCALE + 'px';
-    canvas.style.height = SCR_H * PX_SCALE + 'px';
+    function fitCanvas() {
+        var s = Math.max(1, Math.min(
+            Math.floor(window.innerWidth  / SCR_W),
+            Math.floor(window.innerHeight / SCR_H)
+        ));
+        PX_SCALE = s;
+        canvas.style.width  = SCR_W * s + 'px';
+        canvas.style.height = SCR_H * s + 'px';
+    }
+    fitCanvas();
+    window.addEventListener('resize', fitCanvas);
 
     // --- Double buffer (same pattern as s-macke/VoxelSpace) ---
     var imagedata = ctx.createImageData(SCR_W, SCR_H);
@@ -386,7 +400,7 @@
         x: boat.gx, y: boat.gy,
         heightMeters: BASE_CAM_METERS,
         angle: 0.0,
-        horizon: 100,
+        horizon: 120,
         distance: 800
     };
     window.__camera = camera;
@@ -547,7 +561,8 @@
             plx += camera.x;
             ply += camera.y;
             // 미터 기반 투영. scale 0.44=1:1, 0.8≈1.8x 과장
-            var projScale = 1.32 / z;
+            // projScale은 화면 세로 픽셀 수에 비례 (기준: 300px → 1.32)
+            var projScale = (SCR_H * 0.0044) / z;
 
             // Fog: 사진처럼 먼 곳일수록 짙은 대기 안개
             var fog = Math.pow(z / camera.distance, 1.2);
@@ -645,8 +660,8 @@
         var dt = (current - time) * 0.03;
 
         // 이동은 이산 입력 이벤트에서 moveBoat()로 처리 (연속 이동 없음)
-        if (input.lookup)   camera.horizon += 2 * dt;
-        if (input.lookdown)  camera.horizon -= 2 * dt;
+        if (input.lookup)   camera.horizon += 4 * dt;
+        if (input.lookdown)  camera.horizon -= 4 * dt;
 
         // 카메라 = 배 위치에 즉시 snap. smoothing 제거 → 이동/회전 시
         // 뷰가 배에 정확히 고정되어 "보이는 배 기준" 조종감 유지.
@@ -748,7 +763,7 @@
 
     // --- DrawMinimap (디버그용, 좌하단) ---
     function DrawMinimap() {
-        var MM_SIZE = 96;
+        var MM_SIZE = 108;
         var MM_X = 6;
         var MM_Y = SCR_H - MM_SIZE - 6;
         var STRIDE = minimapStride; // 월드 픽셀/미니맵 픽셀 (- / = 키로 조절)
@@ -835,10 +850,13 @@
         ctx.putImageData(imagedata, 0, 0);
 
         // 배 위치: 화면 중앙에서 아래쪽 (수평선 밑으로 선체가 내려오도록)
-        var BOAT_Y_OFFSET = 45;
-        var sx = (SCR_W - boatImg.width) / 2 | 0;
-        var sy = (SCR_H - boatImg.height) / 2 + BOAT_Y_OFFSET + bob | 0;
-        ctx.drawImage(boatImg, sx, sy);
+        // 2x 스케일 — 해상도 800x600에 맞춰 보트 시각 크기 유지
+        var BOAT_Y_OFFSET = 54;
+        var BOAT_SCALE = 1.33;
+        var dw = boatImg.width * BOAT_SCALE, dh = boatImg.height * BOAT_SCALE;
+        var sx = (SCR_W - dw) / 2 | 0;
+        var sy = (SCR_H - dh) / 2 + BOAT_Y_OFFSET + bob | 0;
+        ctx.drawImage(boatImg, 0, 0, boatImg.width, boatImg.height, sx, sy, dw, dh);
     }
 
     // --- Main Draw loop (20fps cap) ---
