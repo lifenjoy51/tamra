@@ -865,6 +865,8 @@
     var FRAME_INTERVAL = 1000 / 30;
     var lastDrawTime = 0;
     var fpsFrames = 0, fpsStart = 0, fpsCurrent = 0;
+    // Frame time (EMA): Draw 한 번의 전체 소요 시간 (ms). 30fps cap 대기는 미포함.
+    var frameTimeEma = 0;
 
     function pad4(n) { n = n | 0; return n < 0 ? String(n) : (n < 10 ? '   ' + n : n < 100 ? '  ' + n : n < 1000 ? ' ' + n : '' + n); }
 
@@ -889,7 +891,8 @@
             'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
             'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
             'MMZoom:  1:' + minimapStride + '\n' +
-            'FPS:     ' + fpsCurrent;
+            'FPS:     ' + fpsCurrent + '\n' +
+            'Frame:   ' + frameTimeEma.toFixed(2) + 'ms';
     }
 
     function Draw(now) {
@@ -899,12 +902,16 @@
         lastDrawTime = now;
 
         updaterunning = true;
+        var frameStart = performance.now();
         UpdateCamera();
         wave.time += 0.04;
         DrawBackground();
         Render();
         DrawMinimap();
         DrawBoat();
+        var frameDur = performance.now() - frameStart;
+        // EMA alpha=0.1 — 약 10프레임 윈도우
+        frameTimeEma = frameTimeEma === 0 ? frameDur : frameTimeEma * 0.9 + frameDur * 0.1;
 
         // FPS 1초 간격 갱신
         fpsFrames++;
