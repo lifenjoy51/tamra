@@ -860,9 +860,11 @@
         ctx.drawImage(boatImg, sx, sy);
     }
 
-    // --- Main Draw loop (30fps 고정) ---
+    // --- Main Draw loop ---
+    // rAF 리듬에 그대로 맡김 (디스플레이 refresh rate 기준, 보통 60fps).
+    // 과거 30fps cap은 rAF 주기(16.67ms)와 interval(33.3ms)이 미세 지터로
+    // 2~3 rAF 간격을 오가며 20/30fps 진동시켰음 → 제거.
     var updaterunning = false;
-    var FRAME_INTERVAL = 1000 / 30;
     var lastDrawTime = 0;
     var fpsFrames = 0, fpsStart = 0, fpsCurrent = 0;
     // Frame time (EMA): Draw 한 번의 전체 소요 시간 (ms). 30fps cap 대기는 미포함.
@@ -898,7 +900,6 @@
     function Draw(now) {
         window.requestAnimationFrame(Draw);
         if (now === undefined) now = performance.now();
-        if (now - lastDrawTime < FRAME_INTERVAL) return;
         lastDrawTime = now;
 
         updaterunning = true;
