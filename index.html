@@ -1316,20 +1316,21 @@
     }
 
     // --- Render (exact reference algorithm + fog) ---
+    // hiddeny: 함수 밖에 한 번만 할당 → GC 부담 제거
+    var hiddeny = new Int32Array(SCR_W);
+
     function Render() {
         var sinang = Math.sin(camera.angle);
         var cosang = Math.cos(camera.angle);
 
         // Render가 수평선 위/아래 전부 담당. 육지 샘플이 수평선 아래로 투영되면
         // 물에 가려 안 보이는 게 맞으므로 skip → 더 먼 z의 바다 샘플이 채우게 함
-        var hiddeny = new Int32Array(SCR_W);
-        for (var i = 0; i < SCR_W | 0; i = i + 1 | 0)
-            hiddeny[i] = SCR_H;
+        hiddeny.fill(SCR_H);
+        var openCount = SCR_W;   // 아직 '닫히지 않은' (hiddeny > 0) 컬럼 수
 
         // deltaz: 작을수록 far z에서 1도 회전 시 sample shift가 줄어 angle aliasing 감소.
         // 근거리는 세밀하게, 멀리는 완만하게 증가.
         var deltaz = 0.5;
-        var distSq = camera.distance * camera.distance;
         var camMeters = camera.heightMeters;
 
         // 지구 곡률: 거리 z에서 지표면이 flat-earth 대비 z²/(2R) 만큼 낮아짐.
@@ -1339,8 +1340,25 @@
         //   drop_m(z) = (z * UNIT_M)² / (2R) = z² * (UNIT_M² / 2R)
         var UNIT_M = 400;
         var CURVATURE_COEFF = (UNIT_M * UNIT_M) / (2 * 6371000);
+        var HEIGHT_SEA = heightMeters[SEA];  // allSea fast path용 상수
 
-        for (var z = 1; z < camera.distance; z += deltaz) {
+        // 파도 단계 임계값 (거리별 sin 개수 감소)
+        var dist = camera.distance;
+        var dist_wave_3 = dist * 0.2;   // 3 sin (swell+mid+ripple)
+        var dist_wave_2 = dist * 0.5;   // 2 sin (swell+mid)
+        var dist_wave_1 = dist * 0.7;   // 1 sin (swell)
+
+        // 파도 파벡터/상수 캐싱 (내부 루프에서 반복 접근 최소화)
+        var wt  = wave.time;
+        var wsdx = wave.swell.dx,  wsdy = wave.swell.dy,  wss = wave.swell.speed,  wsa = wave.swell.amp;
+        var wmdx = wave.mid.dx,    wmdy = wave.mid.dy,    wms = wave.mid.speed,    wma = wave.mid.amp;
+        var wrdx = wave.ripple.dx, wrdy = wave.ripple.dy, wrs = wave.ripple.speed, wra = wave.ripple.amp;
+
+        var visDist = dist * weather.visibilityCoef;
+        var horizon = camera.horizon;
+        var camX = camera.x, camY = camera.y;
+
+        for (var z = 1; z < dist; z += deltaz) {
             // 이 z에서의 곡률 drop (meters) — 같은 z에선 column 무관
             var curvatureDrop = z * z * CURVATURE_COEFF;
             // 90 degree field of view
@@ -1351,70 +1369,101 @@
 
             var dx = (prx - plx) / SCR_W;
             var dy = (pry - ply) / SCR_W;
-            plx += camera.x;
-            ply += camera.y;
+            plx += camX;
+            ply += camY;
             // 미터 기반 투영. scale 0.44=1:1, 0.8≈1.8x 과장
             // projScale은 화면 세로 픽셀 수에 비례 (기준: 300px → 1.32)
             var projScale = (SCR_H * 0.0044) / z;
 
             // Fog: 사진처럼 먼 곳일수록 짙은 대기 안개. weather로 시정 단축.
-            var fog = Math.pow(z / (camera.distance * weather.visibilityCoef), 1.2);
+            var fog = Math.pow(z / visDist, 1.2);
             if (fog > 1) fog = 1;
             var mf = 1.0 - fog;
 
+            // 이 z에서 바다면 몇 개의 sin을 쓸지 (0=스킵)
+            var waveStage = z < dist_wave_3 ? 3 : z < dist_wave_2 ? 2 : z < dist_wave_1 ? 1 : 0;
+
+            // allSea용 지형 고도 · 화면 y (column 무관)
+            var seaTerM = HEIGHT_SEA - curvatureDrop;
+            var seaHos  = (camMeters - seaTerM) * projScale + horizon | 0;
+
             for (var i = 0; i < SCR_W | 0; i = i + 1 | 0) {
-                // --- 4 이웃 인덱스 + bilinear weights ---
-                var px_i = Math.floor(plx), py_i = Math.floor(ply);
-                var fpx = plx - px_i, fpy = ply - py_i;
-                var ix0 = px_i & MASK, iy0 = py_i & MASK;
-                var ix1 = (ix0 + 1) & MASK, iy1 = (iy0 + 1) & MASK;
-                var off00 = (iy0 << SHIFT) + ix0 | 0;
-                var off10 = (iy0 << SHIFT) + ix1 | 0;
-                var off01 = (iy1 << SHIFT) + ix0 | 0;
-                var off11 = (iy1 << SHIFT) + ix1 | 0;
-
-                var a00 = altitude[off00], a10 = altitude[off10];
-                var a01 = altitude[off01], a11 = altitude[off11];
-                var allSea = (a00 <= SEA) & (a10 <= SEA) & (a01 <= SEA) & (a11 <= SEA);
-                var isSea = allSea !== 0;
-
-                var w00 = (1 - fpx) * (1 - fpy);
-                var w10 = fpx * (1 - fpy);
-                var w01 = (1 - fpx) * fpy;
-                var w11 = fpx * fpy;
-
-                // 높이(meters) bilinear — occlusion 판정에 필요하므로 선행
-                var terMeters = heightMeters[a00] * w00 + heightMeters[a10] * w10
-                              + heightMeters[a01] * w01 + heightMeters[a11] * w11;
-                // 곡률 적용: 지표면이 수평선 아래로 휘어져 내려감
-                terMeters -= curvatureDrop;
-
-                // 파도는 occlusion 체크 이후에만 필요 (wave amp 작아 skip 판정 영향 무시)
-                var heightonscreen = (camMeters - terMeters) * projScale + camera.horizon | 0;
-                if (heightonscreen >= hiddeny[i]) {
+                // Tier 1-①: 이 컬럼이 이미 화면 상단까지 덮였으면 즉시 스킵
+                var prevH = hiddeny[i];
+                if (prevH <= 0) {
                     plx += dx;
                     ply += dy;
                     continue;
                 }
 
-                // --- 드로우 확정: 색상 bilinear + 파도 변조 ---
-                var c00 = colormap[off00], c10v = colormap[off10];
-                var c01v = colormap[off01], c11v = colormap[off11];
-                var cR = (c00 & 0xFF) * w00 + (c10v & 0xFF) * w10
-                       + (c01v & 0xFF) * w01 + (c11v & 0xFF) * w11;
-                var cG = ((c00 >> 8) & 0xFF) * w00 + ((c10v >> 8) & 0xFF) * w10
-                       + ((c01v >> 8) & 0xFF) * w01 + ((c11v >> 8) & 0xFF) * w11;
-                var cB = ((c00 >> 16) & 0xFF) * w00 + ((c10v >> 16) & 0xFF) * w10
-                       + ((c01v >> 16) & 0xFF) * w01 + ((c11v >> 16) & 0xFF) * w11;
+                // --- 4 이웃 인덱스 ---
+                // plx, ply 는 camera.x/y (항상 양수 수만대) 가 더해진 상태라 |0 = floor와 동일
+                var px_i = plx | 0, py_i = ply | 0;
+                var ix0 = px_i & MASK, iy0 = py_i & MASK;
+                var ix1 = (ix0 + 1) & MASK, iy1 = (iy0 + 1) & MASK;
+                var off00 = (iy0 << SHIFT) + ix0 | 0;
 
-                // 파도 색상 변조: 순수 바다 근거리만.
+                var a00 = altitude[off00];
+
+                var heightonscreen, cR, cG, cB, isSea;
+
+                // 4 이웃 바다 여부 한 번에 체크
+                var off10 = (iy0 << SHIFT) + ix1 | 0;
+                var off01 = (iy1 << SHIFT) + ix0 | 0;
+                var off11 = (iy1 << SHIFT) + ix1 | 0;
+                var a10 = altitude[off10], a01 = altitude[off01], a11 = altitude[off11];
+                var allSea = (a00 <= SEA) & (a10 <= SEA) & (a01 <= SEA) & (a11 <= SEA);
+                isSea = allSea !== 0;
+
+                if (isSea) {
+                    // Tier 1-②: allSea fast path — bilinear 전부 스킵, 상수 사용
+                    heightonscreen = seaHos;
+                    if (heightonscreen >= prevH) {
+                        plx += dx;
+                        ply += dy;
+                        continue;
+                    }
+                    var cc = colormap[off00];
+                    cR = cc & 0xFF;
+                    cG = (cc >> 8) & 0xFF;
+                    cB = (cc >> 16) & 0xFF;
+                } else {
+                    var fpx = plx - px_i, fpy = ply - py_i;
+                    var w00 = (1 - fpx) * (1 - fpy);
+                    var w10 = fpx * (1 - fpy);
+                    var w01 = (1 - fpx) * fpy;
+                    var w11 = fpx * fpy;
+
+                    // 높이(meters) bilinear — occlusion 판정에 필요하므로 선행
+                    var terMeters = heightMeters[a00] * w00 + heightMeters[a10] * w10
+                                  + heightMeters[a01] * w01 + heightMeters[a11] * w11;
+                    terMeters -= curvatureDrop;
+                    heightonscreen = (camMeters - terMeters) * projScale + horizon | 0;
+                    if (heightonscreen >= prevH) {
+                        plx += dx;
+                        ply += dy;
+                        continue;
+                    }
+
+                    // --- 드로우 확정: 색상 bilinear ---
+                    var c00 = colormap[off00], c10v = colormap[off10];
+                    var c01v = colormap[off01], c11v = colormap[off11];
+                    cR = (c00 & 0xFF) * w00 + (c10v & 0xFF) * w10
+                       + (c01v & 0xFF) * w01 + (c11v & 0xFF) * w11;
+                    cG = ((c00 >> 8) & 0xFF) * w00 + ((c10v >> 8) & 0xFF) * w10
+                       + ((c01v >> 8) & 0xFF) * w01 + ((c11v >> 8) & 0xFF) * w11;
+                    cB = ((c00 >> 16) & 0xFF) * w00 + ((c10v >> 16) & 0xFF) * w10
+                       + ((c01v >> 16) & 0xFF) * w01 + ((c11v >> 16) & 0xFF) * w11;
+                }
+
+                // Tier 2-①: 파도 색상 변조 — 거리별로 sin 개수 단계 축소.
                 // 카메라 상대 좌표로 계산 — 파벡터가 프레임 간 조금 바뀌어도
                 // 큰 월드 좌표(수만)에 곱해져 전체 위상이 튀는 '깜박임' 방지.
-                if (isSea && z < camera.distance * 0.7) {
-                    var wx = plx - camera.x, wy = ply - camera.y, wt = wave.time;
-                    var waveVal = Math.sin(wx * wave.swell.dx + wy * wave.swell.dy + wt * wave.swell.speed) * wave.swell.amp
-                                + Math.sin(wx * wave.mid.dx   + wy * wave.mid.dy   + wt * wave.mid.speed)   * wave.mid.amp
-                                + Math.sin(wx * wave.ripple.dx + wy * wave.ripple.dy + wt * wave.ripple.speed) * wave.ripple.amp;
+                if (isSea && waveStage > 0) {
+                    var wx = plx - camX, wy = ply - camY;
+                    var waveVal = Math.sin(wx * wsdx + wy * wsdy + wt * wss) * wsa;
+                    if (waveStage >= 2) waveVal += Math.sin(wx * wmdx + wy * wmdy + wt * wms) * wma;
+                    if (waveStage >= 3) waveVal += Math.sin(wx * wrdx + wy * wrdy + wt * wrs) * wra;
                     var wc = waveVal * 7;
                     cR += wc; cG += wc; cB += wc * 0.5;
                 }
@@ -1435,12 +1484,18 @@
                     c = 0xFF000000 | (cb << 16) | (cg << 8) | cr;
                 }
 
-                DrawVerticalLine(i, heightonscreen | 0, hiddeny[i], c);
-                hiddeny[i] = heightonscreen | 0;
+                DrawVerticalLine(i, heightonscreen, prevH, c);
+                hiddeny[i] = heightonscreen;
+                // Tier 1-③: 이 컬럼이 막 '닫혔다' (처음으로 ≤ 0) 면 openCount 감소
+                if (heightonscreen <= 0 && prevH > 0) openCount--;
+
                 plx += dx;
                 ply += dy;
             }
             deltaz += 0.005;
+
+            // Tier 1-③: 모든 컬럼이 닫혔으면 z 루프 조기 종료
+            if (openCount <= 0) break;
         }
     }
 
