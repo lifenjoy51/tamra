@@ -525,7 +525,17 @@
         var distSq = camera.distance * camera.distance;
         var camMeters = camera.heightMeters;
 
+        // 지구 곡률: 거리 z에서 지표면이 flat-earth 대비 z²/(2R) 만큼 낮아짐.
+        // tile_index.json: pixel_deg=0.004167 (15 arc-sec/px) → 한국 위도에서
+        //   Y(위도): 111km/240 ≈ 463m/px, X(경도): 111km·cos(33°)/240 ≈ 387m/px
+        //   평균 ~400m/unit로 근사.
+        //   drop_m(z) = (z * UNIT_M)² / (2R) = z² * (UNIT_M² / 2R)
+        var UNIT_M = 400;
+        var CURVATURE_COEFF = (UNIT_M * UNIT_M) / (2 * 6371000);
+
         for (var z = 1; z < camera.distance; z += deltaz) {
+            // 이 z에서의 곡률 drop (meters) — 같은 z에선 column 무관
+            var curvatureDrop = z * z * CURVATURE_COEFF;
             // 90 degree field of view
             var plx =  -cosang * z - sinang * z;
             var ply =   sinang * z - cosang * z;
@@ -567,6 +577,8 @@
                 // 높이(meters) bilinear — occlusion 판정에 필요하므로 선행
                 var terMeters = heightMeters[a00] * w00 + heightMeters[a10] * w10
                               + heightMeters[a01] * w01 + heightMeters[a11] * w11;
+                // 곡률 적용: 지표면이 수평선 아래로 휘어져 내려감
+                terMeters -= curvatureDrop;
 
                 // 파도는 occlusion 체크 이후에만 필요 (wave amp 작아 skip 판정 영향 무시)
                 var heightonscreen = (camMeters - terMeters) * projScale + camera.horizon | 0;
