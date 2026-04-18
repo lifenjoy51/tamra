@@ -694,13 +694,14 @@
     // 반장반경 AU, 이심률, 궤도경사·승교점·근일점경도 (deg)
     // L0: 평균경도, nd: 일일 평균운동 (deg/day)
     var PLANETS = [
-        { n:'Mercury', L0:252.250906, nd:4.092353837, a:0.387098310, e:0.205634283, i:7.004986, Om: 48.330893, wbar: 77.456119, color:0xFFB0A0A0 },
-        { n:'Venus',   L0:181.979801, nd:1.602130374, a:0.723329820, e:0.006771882, i:3.394662, Om: 76.679920, wbar:131.563707, color:0xFFE8F0F8 },
-        { n:'Mars',    L0:355.433000, nd:0.524033017, a:1.523679342, e:0.093392770, i:1.849726, Om: 49.558093, wbar:336.060234, color:0xFF4040FF },
-        { n:'Jupiter', L0: 34.351519, nd:0.083091379, a:5.202603191, e:0.048494832, i:1.303270, Om:100.464407, wbar: 14.331207, color:0xFF80C0E8 },
-        { n:'Saturn',  L0: 50.077444, nd:0.033459652, a:9.554909596, e:0.055508622, i:2.488878, Om:113.665503, wbar: 93.056787, color:0xFF60C0E0 },
-        { n:'Uranus',  L0:314.055005, nd:0.011731294, a:19.218446062, e:0.046381, i:0.773196, Om: 74.005947, wbar:173.005159, color:0xFFE0E080 },
-        { n:'Neptune', L0:304.348665, nd:0.005981841, a:30.110386869, e:0.009456, i:1.769952, Om:131.784057, wbar: 48.123691, color:0xFFE06060 }
+        // color — 맨눈으로 실제 관측한 색감에 가까운 파스텔 (채도 낮게)
+        { n:'Mercury', L0:252.250906, nd:4.092353837, a:0.387098310, e:0.205634283, i:7.004986, Om: 48.330893, wbar: 77.456119, color:0xFFDEE5EA },
+        { n:'Venus',   L0:181.979801, nd:1.602130374, a:0.723329820, e:0.006771882, i:3.394662, Om: 76.679920, wbar:131.563707, color:0xFFEEF4F8 },
+        { n:'Mars',    L0:355.433000, nd:0.524033017, a:1.523679342, e:0.093392770, i:1.849726, Om: 49.558093, wbar:336.060234, color:0xFF90B4F0 },
+        { n:'Jupiter', L0: 34.351519, nd:0.083091379, a:5.202603191, e:0.048494832, i:1.303270, Om:100.464407, wbar: 14.331207, color:0xFFD2EBFA },
+        { n:'Saturn',  L0: 50.077444, nd:0.033459652, a:9.554909596, e:0.055508622, i:2.488878, Om:113.665503, wbar: 93.056787, color:0xFFB0E5F5 },
+        { n:'Uranus',  L0:314.055005, nd:0.011731294, a:19.218446062, e:0.046381, i:0.773196, Om: 74.005947, wbar:173.005159, color:0xFFDEE8D8 },
+        { n:'Neptune', L0:304.348665, nd:0.005981841, a:30.110386869, e:0.009456, i:1.769952, Om:131.784057, wbar: 48.123691, color:0xFFE0C8B8 }
     ];
     var EARTH = { L0:100.466449, nd:0.985609101, a:1.000000262, e:0.016708634, Om:0, wbar:102.937348, i:0 };
     var planetState = PLANETS.map(function() { return { altRad: 0, azRad: 0, mag: 0 }; });
@@ -1185,9 +1186,9 @@
             }
         }
 
-        // --- Planets (별과 같은 조건: 밤·황혼) ---
-        if (sun.altDeg < 5) {
-            var pFade = (5 - sun.altDeg) / 5;
+        // --- Planets (태양 지평선 아래일 때만. 낮엔 태양 빛으로 안 보임) ---
+        if (sun.altDeg < 0) {
+            var pFade = (-sun.altDeg) / 6;
             if (pFade > 1) pFade = 1;
             pFade *= (1 - weather.cloudiness * 0.8);
             for (var pi = 0; pi < PLANETS.length; pi++) {
@@ -1659,22 +1660,22 @@
             }
         }
 
-        // 행성 (낮엔 금성·목성 빼고 흐림. 그래도 알기 쉽게 색 유지)
-        for (var pi = 0; pi < PLANETS.length; pi++) {
-            var ps = planetState[pi];
-            if (ps.altRad < 0) continue;
-            if (ps.mag > 6) continue;  // 천왕성/해왕성 맨눈 한계 넘음
-            var dltp = ps.azRad + camera.angle;
-            var rp = (Math.PI / 2 - ps.altRad) / (Math.PI / 2) * R;
-            var ppx = cx + Math.sin(dltp) * rp;
-            var ppy = cy - Math.cos(dltp) * rp;
-            var col = PLANETS[pi].color;
-            var cR = col & 0xFF, cG = (col >> 8) & 0xFF, cB = (col >> 16) & 0xFF;
-            var pAlpha = 0.9;
-            if (sun.altDeg > 0 && ps.mag > -1) pAlpha = 0.35;  // 낮엔 어두운 행성 흐리게
-            var psize = ps.mag < -3 ? 3 : ps.mag < 0 ? 2.5 : ps.mag < 2 ? 2 : 1.5;
-            ctx.fillStyle = 'rgba(' + cR + ',' + cG + ',' + cB + ',' + pAlpha + ')';
-            ctx.beginPath(); ctx.arc(ppx, ppy, psize, 0, Math.PI * 2); ctx.fill();
+        // 행성 (태양이 지평선 아래일 때만 표시 — 낮엔 태양빛에 묻혀 안 보임)
+        if (sun.altDeg < 0) {
+            for (var pi = 0; pi < PLANETS.length; pi++) {
+                var ps = planetState[pi];
+                if (ps.altRad < 0) continue;
+                if (ps.mag > 6) continue;  // 천왕성/해왕성 맨눈 한계 넘음
+                var dltp = ps.azRad + camera.angle;
+                var rp = (Math.PI / 2 - ps.altRad) / (Math.PI / 2) * R;
+                var ppx = cx + Math.sin(dltp) * rp;
+                var ppy = cy - Math.cos(dltp) * rp;
+                var col = PLANETS[pi].color;
+                var cR = col & 0xFF, cG = (col >> 8) & 0xFF, cB = (col >> 16) & 0xFF;
+                var psize = ps.mag < -3 ? 3 : ps.mag < 0 ? 2.5 : ps.mag < 2 ? 2 : 1.5;
+                ctx.fillStyle = 'rgba(' + cR + ',' + cG + ',' + cB + ',0.95)';
+                ctx.beginPath(); ctx.arc(ppx, ppy, psize, 0, Math.PI * 2); ctx.fill();
+            }
         }
 
         // 달 (낮에도 표시, 위상 반영)
