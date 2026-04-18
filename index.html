@@ -641,25 +641,31 @@
         if (input.lookup)   camera.horizon += 2 * dt;
         if (input.lookdown)  camera.horizon -= 2 * dt;
 
-        // 카메라: 배 뒤쪽 방향으로 스프링암. 서브유닛 ray march + margin 연속화.
-        // ray march의 cell 경계 hard step은 ray 본질상 남으므로, 최종 카메라 위치를
-        // temporal smoothing (지수 감쇠)로 trailing — 회전/충돌 시 잔점프를 시간축으로 분산.
-        var dirX = Math.sin(boat.angle);
-        var dirY = Math.cos(boat.angle);
-        var CAM_RAY_STEP = 0.125;
-        var MARCH_MAX = CAM_DIST + CAM_LAND_MARGIN;
-        var safeDist = CAM_DIST;
-        for (var t = CAM_RAY_STEP; t <= MARCH_MAX; t += CAM_RAY_STEP) {
-            var rx = boat.gx + t * dirX;
-            var ry = boat.gy + t * dirY;
-            var roff = ((Math.floor(ry) & MASK) << SHIFT) + (Math.floor(rx) & MASK) | 0;
-            if (altitude[roff] > SEA) {
-                safeDist = t - CAM_LAND_MARGIN;
-                if (safeDist < 0) safeDist = 0;
-                else if (safeDist > CAM_DIST) safeDist = CAM_DIST;
-                break;
+        // 카메라 거리: 배 주변 근처 육지까지의 **최소 거리**로 결정 (각도 무관).
+        // 회전 시 ray 방향에 따라 safeDist가 변하던 문제 제거 — 배가 정지해 있으면
+        // safeDist도 일정 → 회전해도 "배가 앞으로 가는" 느낌 없음.
+        var CAM_MARCH_MAX = CAM_DIST + CAM_LAND_MARGIN;
+        var scanR = Math.ceil(CAM_MARCH_MAX) | 0;
+        var bx = Math.floor(boat.gx) | 0, by = Math.floor(boat.gy) | 0;
+        var fx = boat.gx - bx, fy = boat.gy - by;
+        var minLandDist = Infinity;
+        for (var dy = -scanR; dy <= scanR; dy++) {
+            for (var dx = -scanR; dx <= scanR; dx++) {
+                var off = (((by + dy) & MASK) << SHIFT) + ((bx + dx) & MASK) | 0;
+                if (altitude[off] > SEA) {
+                    // 셀 중심까지의 유클리드 거리 (fractional boat 위치 고려)
+                    var ddx = dx + 0.5 - fx, ddy = dy + 0.5 - fy;
+                    var d = Math.sqrt(ddx * ddx + ddy * ddy);
+                    if (d < minLandDist) minLandDist = d;
+                }
             }
         }
+        var safeDist = minLandDist - CAM_LAND_MARGIN;
+        if (safeDist < 0) safeDist = 0;
+        else if (safeDist > CAM_DIST) safeDist = CAM_DIST;
+
+        var dirX = Math.sin(boat.angle);
+        var dirY = Math.cos(boat.angle);
         var targetX = boat.gx + safeDist * dirX;
         var targetY = boat.gy + safeDist * dirY;
         var CAM_SMOOTH = 0.25; // 1.0=즉시, 0=정지
