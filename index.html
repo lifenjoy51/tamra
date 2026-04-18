@@ -1221,8 +1221,8 @@
             }
         }
 
-        // --- Moon (위상 반영, 낮에도 보임) ---
-        if (moonState.altRad > 0) {
+        // --- Moon (태양 지평선 아래일 때만 — 낮엔 태양빛에 묻혀 안 보임) ---
+        if (moonState.altRad > 0 && sun.altDeg < 0) {
             var dlm = moonState.azRad + camera.angle;
             dlm = ((dlm + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
             if (Math.abs(dlm) < Math.PI / 2) {
@@ -1678,8 +1678,8 @@
             }
         }
 
-        // 달 (낮에도 표시, 위상 반영)
-        if (moonState.altRad > 0) {
+        // 달 (태양 지평선 아래일 때만 — 낮엔 태양빛에 묻혀 안 보임)
+        if (moonState.altRad > 0 && sun.altDeg < 0) {
             var dlm = moonState.azRad + camera.angle;
             var rm = (Math.PI / 2 - moonState.altRad) / (Math.PI / 2) * R;
             var mmx = cx + Math.sin(dlm) * rm;
@@ -1705,12 +1705,6 @@
                 else           ctx.fillRect(mmx - MR2, mmy - MR2, MR2 + t, MR2 * 2);
             }
             ctx.restore();
-            // 낮에도 달 윤곽 식별 가능하게 가는 테두리
-            if (sun.altDeg > 0 && ill2 < 0.97) {
-                ctx.strokeStyle = 'rgba(200, 210, 220, 0.6)';
-                ctx.lineWidth = 1;
-                ctx.beginPath(); ctx.arc(mmx, mmy, MR2, 0, Math.PI * 2); ctx.stroke();
-            }
         }
 
         // 천정 마커 + 배 방향 화살표 (화면 위쪽 = 배가 향한 곳)
