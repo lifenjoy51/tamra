@@ -25,180 +25,17 @@ import { computeSun } from './astronomy/sun';
 import { STARS, starState, MILKYWAY, milkyState, starTwinklePhase, starTwinkleFreq, updateStars } from './astronomy/stars';
 import { PLANETS, planetState } from './astronomy/planets';
 import { updateMoon } from './astronomy/moon';
+import {
+    SKY_DAY_Z, SKY_DUSK_Z, SKY_NIGHT_Z,
+    skyRow, skyGlowX, skyGlowY, skyGlow,
+    updateSky, updateCloudMask, cloudAlphaAt, cloudFull, CLOUD_FULL_H,
+} from './sky';
 
 (async function () {
 
 // Fog target: 바다 → 하늘색, 육지 → 어두운 회색 (실제 대기 원근감)
 var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
 var FOG_LAND_R = 90,  FOG_LAND_G = 100, FOG_LAND_B = 120;
-
-// Sky palette — zenith(천정) / horizon(지평) RGB, 낮/황혼/밤 3단
-var SKY_DAY_Z   = [ 60,  90, 170], SKY_DAY_H   = [160, 185, 210];
-var SKY_DUSK_Z  = [ 42,  24,  64], SKY_DUSK_H  = [255, 144,  80];
-var SKY_NIGHT_Z = [  6,   8,  28], SKY_NIGHT_H = [ 12,  16,  40];
-var skyRow = new Uint32Array(SCR_H);
-// 대기광: skyGlowX[x]·skyGlowY[y] 외적으로 태양 방위·지평근처 붉은기 분포 표현.
-// 분리 가능(separable) 가정 — 정확한 물리 아닌 체감 근사. 값 0~255 범위 가산 강도.
-var skyGlowX = new Float32Array(SCR_W);
-var skyGlowY = new Float32Array(SCR_H);
-var skyGlowR = 0, skyGlowG = 0, skyGlowB = 0;  // 띠 색 (황혼 붉은/주황)
-
-// 태양 고도(deg)에 따라 skyRow 재계산. cloudiness로 회색 blend.
-function updateSky(altDeg, cloudiness) {
-    if (cloudiness === undefined) cloudiness = 0;
-    var dayW   = (altDeg - 5) / 10;     if (dayW < 0) dayW = 0;   else if (dayW > 1) dayW = 1;
-    var nightW = (-6 - altDeg) / 6;     if (nightW < 0) nightW = 0; else if (nightW > 1) nightW = 1;
-    var duskW  = 1 - dayW - nightW;     if (duskW < 0) duskW = 0;
-    var zR = SKY_DAY_Z[0]*dayW + SKY_DUSK_Z[0]*duskW + SKY_NIGHT_Z[0]*nightW;
-    var zG = SKY_DAY_Z[1]*dayW + SKY_DUSK_Z[1]*duskW + SKY_NIGHT_Z[1]*nightW;
-    var zB = SKY_DAY_Z[2]*dayW + SKY_DUSK_Z[2]*duskW + SKY_NIGHT_Z[2]*nightW;
-    var hR = SKY_DAY_H[0]*dayW + SKY_DUSK_H[0]*duskW + SKY_NIGHT_H[0]*nightW;
-    var hG = SKY_DAY_H[1]*dayW + SKY_DUSK_H[1]*duskW + SKY_NIGHT_H[1]*nightW;
-    var hB = SKY_DAY_H[2]*dayW + SKY_DUSK_H[2]*duskW + SKY_NIGHT_H[2]*nightW;
-    // 구름 blend: 낮엔 밝은 회색(200,205,210), 밤엔 어두운 회색(40,45,55), 황혼엔 주황 섞인 회색
-    var cGray = 40 + 160 * dayW + 80 * duskW;
-    var cGrayG = 45 + 160 * dayW + 70 * duskW;
-    var cGrayB = 55 + 155 * dayW + 60 * duskW;
-    var cdZ = cloudiness * 0.55;  // 천정 강도
-    var cdH = cloudiness * 0.35;  // 지평 강도 (작음 — fog에 이미 잡힘)
-    zR = zR * (1 - cdZ) + cGray * cdZ;
-    zG = zG * (1 - cdZ) + cGrayG * cdZ;
-    zB = zB * (1 - cdZ) + cGrayB * cdZ;
-    hR = hR * (1 - cdH) + cGray * cdH;
-    hG = hG * (1 - cdH) + cGrayG * cdH;
-    hB = hB * (1 - cdH) + cGrayB * cdH;
-    for (var sy = 0; sy < SCR_H; sy++) {
-        var t = sy / SCR_H;
-        var r = zR + (hR - zR) * t | 0;
-        var g = zG + (hG - zG) * t | 0;
-        var b = zB + (hB - zB) * t | 0;
-        skyRow[sy] = 0xFF000000 | (b << 16) | (g << 8) | r;
-    }
-
-    // --- 지평 대기광 띠 (separable) ---
-    // 태양이 지평선 근처(-6~+10°)일 때만 강하게 — 황혼기 비대칭 붉은 기
-    // 방향 단서: 해가 뜬/진 방위를 색으로 판독 가능
-    var glowStrength = 0;
-    if (altDeg < 15 && altDeg > -8) {
-        var k = 1 - Math.abs(altDeg - 3) / 12;   // peak near altDeg=3°
-        if (k < 0) k = 0; else if (k > 1) k = 1;
-        glowStrength = k * (1 - cloudiness * 0.5);
-    }
-    // 색: 저고도일수록 붉게, 고도↑면 주황/노랑
-    var glowMix = (altDeg + 8) / 23;  // 0(지평 아래)~1(alt=15)
-    if (glowMix < 0) glowMix = 0; else if (glowMix > 1) glowMix = 1;
-    skyGlowR = 255;
-    skyGlowG = (90 + 120 * glowMix) | 0;
-    skyGlowB = ( 50 +  90 * glowMix) | 0;
-
-    // skyGlowY: 지평(horizon) 근처 y에서 최대, 천정으로 갈수록 0
-    var horizonY = (camera && camera.horizon) ? camera.horizon : (SCR_H * 0.5) | 0;
-    for (var gy = 0; gy < SCR_H; gy++) {
-        var dyH = gy - horizonY;
-        // 지평 위쪽(dyH<0) 60px 내에서 fade, 아래쪽은 거의 0 (바다/지형이 덮음)
-        var w;
-        if (dyH <= 0) {
-            var t2 = -dyH / 60;
-            w = t2 < 1 ? (1 - t2) : 0;
-        } else {
-            w = 0;
-        }
-        skyGlowY[gy] = w * glowStrength;
-    }
-
-    // skyGlowX: 태양 방위 기준 cos falloff. 태양 반대편엔 0.
-    // sun.azRad + camera.angle = delta (화면 중앙 기준 방위 차)
-    var sunDelta = 0;
-    if (window.sun && window.camera) {
-        var d = sun.azRad + camera.angle;
-        sunDelta = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    }
-    for (var gx = 0; gx < SCR_W; gx++) {
-        // 화면 좌표 → 방위각(카메라 상대)
-        var relAz = (gx - SCR_W / 2) / PX_PER_RAD_H_INIT;
-        var ang = relAz - sunDelta;
-        // cos(ang) falloff, 음수는 0으로 클램프
-        var ca = Math.cos(ang);
-        skyGlowX[gx] = ca > 0 ? ca * ca : 0;
-    }
-}
-var PX_PER_RAD_H_INIT = SCR_W / (Math.PI / 2);  // updateSky용 (camera 정의 전)
-updateSky(45, 0.3); // 초기값 (낮, 부분적 구름)
-
-// --- 구름 마스크 (저해상도 2D noise, 화면 전체 bilinear 업샘플링) ---
-// cloudiness=0 → 전부 0, cloudiness=1 → 전부 0.8 이상
-// 결정적 noise: 위치(경도/위도) + 날짜 단위. 프레임 단위 flicker 없음.
-var CLOUD_W = 64, CLOUD_H = 18;  // 저해상도 노이즈 격자
-var cloudMask = new Float32Array(CLOUD_W * CLOUD_H);
-// Full-res 구름 알파 버퍼 (지평선 위쪽만). 30초 게임내시간마다 1회 업샘플.
-var CLOUD_FULL_H = 200;  // 지평 위 최대 높이
-var cloudFull = new Uint8ClampedArray(SCR_W * CLOUD_FULL_H);  // 0~255
-var cloudLastKey = -1;
-function cloudHash(ix, iy) {
-    var h = ((ix | 0) * 374761393 ^ (iy | 0) * 668265263) >>> 0;
-    h = (h ^ (h >>> 13)) * 1274126177 >>> 0;
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-}
-function cloudNoise2D(x, y) {
-    // value noise (bilinear)
-    var xi = Math.floor(x), yi = Math.floor(y);
-    var xf = x - xi, yf = y - yi;
-    var a = cloudHash(xi,     yi);
-    var b = cloudHash(xi + 1, yi);
-    var c = cloudHash(xi,     yi + 1);
-    var d = cloudHash(xi + 1, yi + 1);
-    var u = xf * xf * (3 - 2 * xf);
-    var v = yf * yf * (3 - 2 * yf);
-    return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
-}
-function updateCloudMask() {
-    // 갱신 주기: 30초 게임내시간. 과도한 flicker 방지.
-    var key = (timeRef.gameTime / 30000) | 0;
-    if (key === cloudLastKey) return;
-    cloudLastKey = key;
-    var cloudi = weather.cloudiness;
-    // 구름 pan: 경도·시간으로 offset
-    var panX = sun.lon * 0.4 + key * 0.05;
-    var panY = sun.lat * 0.3;
-    // 구름량이 낮으면 마스크 전체 0, 높으면 임계값 낮춰 두껍게
-    var thr = 1.1 - cloudi * 0.95;   // cloudi=1 → thr=0.15, cloudi=0 → 1.1 (항상 0)
-    for (var cy = 0; cy < CLOUD_H; cy++) {
-        for (var cx = 0; cx < CLOUD_W; cx++) {
-            var u = (cx / CLOUD_W) * 8 + panX;
-            var v = (cy / CLOUD_H) * 3 + panY;
-            var n = cloudNoise2D(u, v) * 0.6 + cloudNoise2D(u * 2.1, v * 2.1) * 0.3 + cloudNoise2D(u * 4.3, v * 4.3) * 0.1;
-            var m = n - thr;
-            if (m < 0) m = 0;
-            else if (m > 0.4) m = 0.4;
-            cloudMask[cy * CLOUD_W + cx] = m * 2.5;  // 최대 1.0
-        }
-    }
-    // Full-res 업샘플 (bilinear) — 한 번만.
-    for (var fy = 0; fy < CLOUD_FULL_H; fy++) {
-        var v = (fy / CLOUD_FULL_H) * (CLOUD_H - 1);
-        var vi = v | 0; var vf = v - vi;
-        if (vi >= CLOUD_H - 1) { vi = CLOUD_H - 2; vf = 1; }
-        for (var fx = 0; fx < SCR_W; fx++) {
-            var u = (fx / SCR_W) * (CLOUD_W - 1);
-            var ui = u | 0; var uf = u - ui;
-            if (ui >= CLOUD_W - 1) { ui = CLOUD_W - 2; uf = 1; }
-            var aF = cloudMask[vi * CLOUD_W + ui];
-            var bF = cloudMask[vi * CLOUD_W + ui + 1];
-            var cF = cloudMask[(vi + 1) * CLOUD_W + ui];
-            var dF = cloudMask[(vi + 1) * CLOUD_W + ui + 1];
-            var val = aF * (1 - uf) * (1 - vf) + bF * uf * (1 - vf) + cF * (1 - uf) * vf + dF * uf * vf;
-            cloudFull[fy * SCR_W + fx] = (val * 255) | 0;
-        }
-    }
-}
-// 화면 좌표 → cloudFull 인덱스(지평 위 0~CLOUD_FULL_H). 스크린 y가 horizon 근처일수록 mapped v가 작음.
-function cloudAlphaAt(x, y, horizonY) {
-    if (y >= horizonY || y < 0 || x < 0 || x >= SCR_W) return 0;
-    // 지평선 = cloudFull 아래쪽, 천정 = cloudFull 위쪽. horizonY=y일 때 CLOUD_FULL_H-1.
-    var fy = ((horizonY - y) / horizonY * (CLOUD_FULL_H - 1)) | 0;
-    if (fy < 0) fy = 0; else if (fy >= CLOUD_FULL_H) fy = CLOUD_FULL_H - 1;
-    return cloudFull[fy * SCR_W + x] / 255;
-}
 
 // --- 초기 로드: tile_index + 시작 지역 5x5 + boat 스프라이트 ---
 var boatImg;
@@ -527,9 +364,9 @@ function DrawBackground() {
                 var a = gy * skyGlowX[x];
                 if (a > 0.005) {
                     if (a > 1) a = 1;
-                    var nR = (bR0 + (skyGlowR - bR0) * a) | 0;
-                    var nG = (bG0 + (skyGlowG - bG0) * a) | 0;
-                    var nB = (bB0 + (skyGlowB - bB0) * a) | 0;
+                    var nR = (bR0 + (skyGlow.r - bR0) * a) | 0;
+                    var nG = (bG0 + (skyGlow.g - bG0) * a) | 0;
+                    var nB = (bB0 + (skyGlow.b - bB0) * a) | 0;
                     pxc = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
                 }
             }
