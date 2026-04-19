@@ -36,8 +36,9 @@ python3 generate_world_tiles.py --verify        # 제주 타일 비교
 s-macke/VoxelSpace 기반 + 확장. Draw 루프 순서 (`index.html:1834`):
 
 ```
-UpdateCamera → DrawBackground(sky + 별 + 행성 + 달 + 태양)
+UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + 달 + 태양)
   → Render(bilinear VS, 수평선 위/아래 전부 담당)
+  → drawNearFog(저시정 veil) → drawPrecipitation(비/눈) → drawLightning(뇌전 flash)
   → DrawMinimap → DrawBoat(buf → canvas flip + sprite)
   → DrawSkyMap(K키일 때 polar azimuthal 오버레이)
 ```
@@ -80,8 +81,14 @@ UpdateCamera → DrawBackground(sky + 별 + 행성 + 달 + 태양)
 | **은하수** | `MILKYWAY`, `milkyState` | galactic plane b=0 → J2000 NGP 변환 (l=5° 간격 72점) + 밀도 가중 |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
 | **달** | `updateMoon`, `moonState` 위상·halo | Meeus 간이식 → λ/β. cloudiness > 0.3 시 halo 가산 |
-| **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef |
+| **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef, precipitation(>0.6 임계), precipType(위도 기반 rain/snow) |
 | **대기광 / Halo** | `skyGlowX/Y` (separable), 태양 halo profile | 황혼 비대칭 붉은 띠(방위별), 태양 halo 고도별 반경·색 |
+| **구름** | `updateCloudMask`, `cloudAlphaAt`, `cloudFull` | 64×18 value noise → bilinear 업샘플 → `SCR_W×200` 풀버퍼(30s 게임시간마다 1회). `cloudi<0.15`면 sky fill 빠른 경로 |
+| **비/눈** | `drawPrecipitation`, `precipX/Y` | 300 스크린 공간 파티클, 바람 driftX + 중력 fallY. precipitation으로 active 수 조절 |
+| **근거리 안개** | `drawNearFog` | visibilityCoef < 0.7 시 buf32 전체에 연회색/남청 veil 블렌드 (낮/밤 색 분기) |
+| **뇌전** | `drawLightning` | cloudiness>0.85 + `gameTime/30000` bucket hash prob gate, real time 0~120ms flash, 쿨다운 1.5s |
+
+**디버그 override** (window에서 직접): `__cloudOverride`(cloudiness), `__precipOverride`(precipitation 0~1), `__precipTypeOverride`('rain'|'snow').
 
 ### 시간 가속
 

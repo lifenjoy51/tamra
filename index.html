@@ -233,6 +233,81 @@
     var PX_PER_RAD_H_INIT = SCR_W / (Math.PI / 2);  // updateSky용 (camera 정의 전)
     updateSky(45, 0.3); // 초기값 (낮, 부분적 구름)
 
+    // --- 구름 마스크 (저해상도 2D noise, 화면 전체 bilinear 업샘플링) ---
+    // cloudiness=0 → 전부 0, cloudiness=1 → 전부 0.8 이상
+    // 결정적 noise: 위치(경도/위도) + 날짜 단위. 프레임 단위 flicker 없음.
+    var CLOUD_W = 64, CLOUD_H = 18;  // 저해상도 노이즈 격자
+    var cloudMask = new Float32Array(CLOUD_W * CLOUD_H);
+    // Full-res 구름 알파 버퍼 (지평선 위쪽만). 30초 게임내시간마다 1회 업샘플.
+    var CLOUD_FULL_H = 200;  // 지평 위 최대 높이
+    var cloudFull = new Uint8ClampedArray(SCR_W * CLOUD_FULL_H);  // 0~255
+    var cloudLastKey = -1;
+    function cloudHash(ix, iy) {
+        var h = ((ix | 0) * 374761393 ^ (iy | 0) * 668265263) >>> 0;
+        h = (h ^ (h >>> 13)) * 1274126177 >>> 0;
+        return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+    }
+    function cloudNoise2D(x, y) {
+        // value noise (bilinear)
+        var xi = Math.floor(x), yi = Math.floor(y);
+        var xf = x - xi, yf = y - yi;
+        var a = cloudHash(xi,     yi);
+        var b = cloudHash(xi + 1, yi);
+        var c = cloudHash(xi,     yi + 1);
+        var d = cloudHash(xi + 1, yi + 1);
+        var u = xf * xf * (3 - 2 * xf);
+        var v = yf * yf * (3 - 2 * yf);
+        return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
+    }
+    function updateCloudMask() {
+        // 갱신 주기: 30초 게임내시간. 과도한 flicker 방지.
+        var key = (gameTime / 30000) | 0;
+        if (key === cloudLastKey) return;
+        cloudLastKey = key;
+        var cloudi = weather.cloudiness;
+        // 구름 pan: 경도·시간으로 offset
+        var panX = sun.lon * 0.4 + key * 0.05;
+        var panY = sun.lat * 0.3;
+        // 구름량이 낮으면 마스크 전체 0, 높으면 임계값 낮춰 두껍게
+        var thr = 1.1 - cloudi * 0.95;   // cloudi=1 → thr=0.15, cloudi=0 → 1.1 (항상 0)
+        for (var cy = 0; cy < CLOUD_H; cy++) {
+            for (var cx = 0; cx < CLOUD_W; cx++) {
+                var u = (cx / CLOUD_W) * 8 + panX;
+                var v = (cy / CLOUD_H) * 3 + panY;
+                var n = cloudNoise2D(u, v) * 0.6 + cloudNoise2D(u * 2.1, v * 2.1) * 0.3 + cloudNoise2D(u * 4.3, v * 4.3) * 0.1;
+                var m = n - thr;
+                if (m < 0) m = 0;
+                else if (m > 0.4) m = 0.4;
+                cloudMask[cy * CLOUD_W + cx] = m * 2.5;  // 최대 1.0
+            }
+        }
+        // Full-res 업샘플 (bilinear) — 한 번만.
+        for (var fy = 0; fy < CLOUD_FULL_H; fy++) {
+            var v = (fy / CLOUD_FULL_H) * (CLOUD_H - 1);
+            var vi = v | 0; var vf = v - vi;
+            if (vi >= CLOUD_H - 1) { vi = CLOUD_H - 2; vf = 1; }
+            for (var fx = 0; fx < SCR_W; fx++) {
+                var u = (fx / SCR_W) * (CLOUD_W - 1);
+                var ui = u | 0; var uf = u - ui;
+                if (ui >= CLOUD_W - 1) { ui = CLOUD_W - 2; uf = 1; }
+                var aF = cloudMask[vi * CLOUD_W + ui];
+                var bF = cloudMask[vi * CLOUD_W + ui + 1];
+                var cF = cloudMask[(vi + 1) * CLOUD_W + ui];
+                var dF = cloudMask[(vi + 1) * CLOUD_W + ui + 1];
+                var val = aF * (1 - uf) * (1 - vf) + bF * uf * (1 - vf) + cF * (1 - uf) * vf + dF * uf * vf;
+                cloudFull[fy * SCR_W + fx] = (val * 255) | 0;
+            }
+        }
+    }
+    // 화면 좌표 → cloudFull 인덱스(지평 위 0~CLOUD_FULL_H). 스크린 y가 horizon 근처일수록 mapped v가 작음.
+    function cloudAlphaAt(x, y, horizonY) {
+        if (y >= horizonY || y < 0 || x < 0 || x >= SCR_W) return 0;
+        // 지평선 = cloudFull 아래쪽, 천정 = cloudFull 위쪽. horizonY=y일 때 CLOUD_FULL_H-1.
+        var fy = ((horizonY - y) / horizonY * (CLOUD_FULL_H - 1)) | 0;
+        if (fy < 0) fy = 0; else if (fy >= CLOUD_FULL_H) fy = CLOUD_FULL_H - 1;
+        return cloudFull[fy * SCR_W + x] / 255;
+    }
+
     // --- 구간별 선형 매핑 (piecewise linear) ---
     // Uint8 값 → 실제 미터 역변환 LUT (렌더링 시 구간별 scale 보정)
     var SEGMENTS = [
@@ -924,7 +999,7 @@
 
     // --- Weather (구름·시정) ---
     // cloudiness 0..1, visibilityCoef 0.5..1.0 (시정 거리 배율)
-    var weather = { cloudiness: 0.3, visibilityCoef: 1.0 };
+    var weather = { cloudiness: 0.3, visibilityCoef: 1.0, precipitation: 0, precipType: 'rain' };
     function computeWeather() {
         var lat = sun.lat;
         var a = Math.abs(lat);
@@ -945,6 +1020,20 @@
         if (base < 0) base = 0; else if (base > 1) base = 1;
         weather.cloudiness = base;
         weather.visibilityCoef = 1.0 - base * 0.5;
+        // 강수: cloudiness > 0.6 구간에서 선형 증가, 1.0까지. 위도 높으면 눈.
+        weather.precipitation = base > 0.6 ? (base - 0.6) / 0.35 : 0;
+        if (weather.precipitation > 1) weather.precipitation = 1;
+        weather.precipType = (a > 45 || (a > 35 && sun.dayOfYear < 80) || (a > 35 && sun.dayOfYear > 300)) ? 'snow' : 'rain';
+        if (typeof window.__cloudOverride === 'number') {
+            weather.cloudiness = window.__cloudOverride;
+            weather.visibilityCoef = 1.0 - weather.cloudiness * 0.5;
+        }
+        if (typeof window.__precipOverride === 'number') {
+            weather.precipitation = window.__precipOverride;
+        }
+        if (typeof window.__precipTypeOverride === 'string') {
+            weather.precipType = window.__precipTypeOverride;
+        }
     }
     window.__weather = weather;
     function updateStars() {
@@ -1233,26 +1322,55 @@
 
     function DrawBackground() {
         updateSky(sun.altDeg, weather.cloudiness);
+        updateCloudMask();
+        // 구름 색 (낮=흰, 밤=어두운 회색, 황혼=주황 섞임) — updateSky cGray와 유사
+        var cldDay   = sun.altDeg > 5 ? 1 : (sun.altDeg > -6 ? (sun.altDeg + 6) / 11 : 0);
+        var cldNight = sun.altDeg < -6 ? 1 : 0;
+        var cldDusk  = 1 - cldDay - cldNight; if (cldDusk < 0) cldDusk = 0;
+        var cloudR = 240 * cldDay + 180 * cldDusk + 30 * cldNight;
+        var cloudG = 240 * cldDay + 140 * cldDusk + 34 * cldNight;
+        var cloudB = 245 * cldDay + 120 * cldDusk + 45 * cldNight;
+        var horizonY = (camera && camera.horizon) ? camera.horizon : (SCR_H * 0.5) | 0;
+        var cloudActive = weather.cloudiness > 0.15;
         for (var y = 0; y < SCR_H; y++) {
             var c = skyRow[y];
             var base = y * SCR_W;
             var gy = skyGlowY[y];
-            if (gy > 0.001) {
-                // 대기광 띠 가산: 하늘 기본색 + glow 색 × (gx × gy)
-                var bR0 = c & 0xFF, bG0 = (c >> 8) & 0xFF, bB0 = (c >> 16) & 0xFF;
-                for (var x = 0; x < SCR_W; x++) {
+            var isSky = y < horizonY;
+            var cFyRow = (isSky && cloudActive) ? (((horizonY - y) / horizonY * (CLOUD_FULL_H - 1)) | 0) : -1;
+            if (cFyRow >= CLOUD_FULL_H) cFyRow = CLOUD_FULL_H - 1;
+            var glowOn = gy > 0.001;
+            if (!glowOn && cFyRow < 0) {
+                // 순수 하늘색 — fill 빠른 경로
+                buf32.fill(c, base, base + SCR_W);
+                continue;
+            }
+            var bR0 = c & 0xFF, bG0 = (c >> 8) & 0xFF, bB0 = (c >> 16) & 0xFF;
+            var cloudRow = cFyRow >= 0 ? cFyRow * SCR_W : -1;
+            for (var x = 0; x < SCR_W; x++) {
+                var pxc = c;
+                if (glowOn) {
                     var a = gy * skyGlowX[x];
-                    if (a < 0.005) { buf32[base + x] = c; continue; }
-                    if (a > 1) a = 1;
-                    var nR = (bR0 + (skyGlowR - bR0) * a) | 0;
-                    var nG = (bG0 + (skyGlowG - bG0) * a) | 0;
-                    var nB = (bB0 + (skyGlowB - bB0) * a) | 0;
-                    buf32[base + x] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+                    if (a > 0.005) {
+                        if (a > 1) a = 1;
+                        var nR = (bR0 + (skyGlowR - bR0) * a) | 0;
+                        var nG = (bG0 + (skyGlowG - bG0) * a) | 0;
+                        var nB = (bB0 + (skyGlowB - bB0) * a) | 0;
+                        pxc = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+                    }
                 }
-            } else {
-                for (var x = 0; x < SCR_W; x++) {
-                    buf32[base + x] = c;
+                if (cloudRow >= 0) {
+                    var ca = cloudFull[cloudRow + x];
+                    if (ca > 4) {
+                        var caf = ca * (1 / 255);
+                        var pR = pxc & 0xFF, pG = (pxc >> 8) & 0xFF, pB = (pxc >> 16) & 0xFF;
+                        var mR = (pR + (cloudR - pR) * caf) | 0;
+                        var mG = (pG + (cloudG - pG) * caf) | 0;
+                        var mB = (pB + (cloudB - pB) * caf) | 0;
+                        pxc = 0xFF000000 | (mB << 16) | (mG << 8) | mR;
+                    }
                 }
+                buf32[base + x] = pxc;
             }
         }
 
@@ -1272,7 +1390,10 @@
                     var mxp = (SCR_W / 2 + mdlt * PX_PER_RAD_H) | 0;
                     var myp = (camera.horizon - mws.altRad * (camera.horizon / (Math.PI / 2))) | 0;
                     if (mxp < 0 || mxp >= SCR_W || myp < 0 || myp >= SCR_H) continue;
-                    var mwa = mwDark * MILKYWAY[mj].dens * 0.35;
+                    // 구름 차폐
+                    var mCov = cloudAlphaAt(mxp, myp, horizonY);
+                    if (mCov > 0.5) continue;
+                    var mwa = mwDark * MILKYWAY[mj].dens * 0.35 * (1 - mCov);
                     // 2x2 부드러운 번짐 — 띠로 보이도록
                     for (var mdy = -1; mdy <= 1; mdy++) {
                         for (var mdx = -1; mdx <= 1; mdx++) {
@@ -1313,6 +1434,9 @@
                 var sxs = (SCR_W / 2 + dlt * PX_PER_RAD_H) | 0;
                 var sys = (camera.horizon - st.altRad * (camera.horizon / (Math.PI / 2))) | 0;
                 if (sxs < 0 || sxs >= SCR_W || sys < 0 || sys >= SCR_H) continue;
+                // 구름 차폐 — 두꺼운 구름 위에서는 숨김
+                var sCov = cloudAlphaAt(sxs, sys, horizonY);
+                if (sCov > 0.55) continue;
                 // 밝기 — magnitude 낮을수록 밝음. mag 4 근처도 희미하게 보이도록 floor 0.3.
                 var magBright = (4.0 - star.mag) / 3.5;
                 if (magBright < 0.3) magBright = 0.3;
@@ -1378,6 +1502,8 @@
                 var pmag = ps.mag;
                 // 맨눈 한계 ~6. 천왕성(5.7)/해왕성(7.8)은 거의 안 보임. 보여도 작게.
                 if (pmag > 6) continue;
+                var pCov = cloudAlphaAt(ppx, ppy, camera.horizon);
+                if (pCov > 0.55) continue;
                 var c = PLANETS[pi].color;
                 // 밝은 행성(금성·목성)은 십자 + 중심
                 if (pmag < -1) {
@@ -1403,11 +1529,13 @@
             if (Math.abs(dlm) < Math.PI / 2) {
                 var mx = (SCR_W / 2 + dlm * PX_PER_RAD_H) | 0;
                 var my = (camera.horizon - moonState.altRad * (camera.horizon / (Math.PI / 2))) | 0;
+                var moonCov = cloudAlphaAt(mx, my, camera.horizon);
                 var MR = 5;
                 var ill = moonState.illumination;
                 var side = Math.sin(moonState.phase) >= 0 ? 1 : -1;
                 var bright = 0xFFE8F0F4;  // 밝은 면
                 var isDay = sun.altDeg > 0;
+                if (moonCov > 0.8) { /* 두꺼운 구름 뒤 — 생략 */ } else {
                 // --- Moon halo (cloudiness > 0.3 일 때 습한 대기 산란 느낌) ---
                 if (weather.cloudiness > 0.3 && ill > 0.1) {
                     var MHR = 16 + (weather.cloudiness * 10) | 0;  // 16~26
@@ -1461,6 +1589,7 @@
                         // 낮: 어두운 면은 배경 유지 (하늘과 자연스럽게 섞임)
                     }
                 }
+                }  // end if (moonCov > 0.8)
             }
         }
 
@@ -1771,6 +1900,120 @@
         time = nowMs;
     }
 
+    // --- Precipitation (비·눈 파티클) ---
+    // 사전 할당 ~300개. 화면 좌표계에서 직접 이동/그리기 → 저비용.
+    // precipitation=0이면 drawPrecipitation 즉시 리턴.
+    var PRECIP_MAX = 300;
+    var precipX = new Float32Array(PRECIP_MAX);
+    var precipY = new Float32Array(PRECIP_MAX);
+    (function initPrecip() {
+        for (var i = 0; i < PRECIP_MAX; i++) {
+            precipX[i] = Math.random() * SCR_W;
+            precipY[i] = Math.random() * SCR_H;
+        }
+    })();
+    function drawPrecipitation() {
+        var intensity = weather.precipitation;
+        if (intensity <= 0.001) return;
+        var isSnow = weather.precipType === 'snow';
+        var active = (PRECIP_MAX * intensity) | 0;
+        // 바람 기반 경사: 풍속·풍향 일부 반영. 화면 상 x축 방향 성분만 쓰면 과함 → 완만히.
+        // wind.angleRad: 0=북(바람이 북에서 불어옴). 동쪽 성분 = -sin(angleRad)*speed
+        var windX = -Math.sin(wind.angleRad) * wind.speedMS;
+        var driftX = windX * 0.18;             // px/frame 근사
+        var fallY = isSnow ? 1.2 : 5.5;        // 눈은 느리게, 비는 빠르게
+        // 지평선 아래엔 안 떨어짐(배/바다 위로 보이는 효과는 없으니 전 화면 허용)
+        var rainCol = 0xFFE0C89C;   // light blue-gray (BGR)
+        var snowCol = 0xFFF0F0FF;
+        for (var i = 0; i < active; i++) {
+            var x = precipX[i] + driftX;
+            var y = precipY[i] + fallY;
+            if (y >= SCR_H || x < 0 || x >= SCR_W) {
+                // 재생성: 화면 위쪽 랜덤
+                x = Math.random() * SCR_W;
+                y = Math.random() * -SCR_H * 0.25;
+            }
+            precipX[i] = x;
+            precipY[i] = y;
+            var ix = x | 0, iy = y | 0;
+            if (iy < 0 || iy >= SCR_H || ix < 0 || ix >= SCR_W) continue;
+            if (isSnow) {
+                buf32[iy * SCR_W + ix] = snowCol;
+            } else {
+                // 비: 짧은 3px 사선 (driftX 방향)
+                var dxSign = driftX < 0 ? -1 : 1;
+                for (var k = 0; k < 3; k++) {
+                    var lx = ix - k * dxSign;
+                    var ly = iy - k;
+                    if (ly < 0 || ly >= SCR_H || lx < 0 || lx >= SCR_W) break;
+                    buf32[ly * SCR_W + lx] = rainCol;
+                }
+            }
+        }
+    }
+
+    // --- Near-distance fog (저시정 안개) ---
+    // visibilityCoef < 0.7 일 때 전체 화면에 옅은 회백색 veil 덧입힘.
+    // Render()의 거리 fog와 별개로, 근거리까지 감소된 시정을 강화.
+    function drawNearFog() {
+        var vis = weather.visibilityCoef;
+        if (vis >= 0.7) return;
+        // strength: vis 0.7→0, 0.3→0.4
+        var strength = (0.7 - vis) * 1.0;
+        if (strength > 0.5) strength = 0.5;
+        // 안개 색: 주간 = 연회색, 야간 = 짙은 청색
+        var fR, fG, fB;
+        if (sun.altDeg > 5) { fR = 200; fG = 200; fB = 205; }
+        else if (sun.altDeg > -6) { fR = 140; fG = 130; fB = 130; }
+        else { fR = 30; fG = 34; fB = 44; }
+        var total = SCR_W * SCR_H;
+        for (var i = 0; i < total; i++) {
+            var bg = buf32[i];
+            var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
+            var nR = (bR + (fR - bR) * strength) | 0;
+            var nG = (bG + (fG - bG) * strength) | 0;
+            var nB = (bB + (fB - bB) * strength) | 0;
+            buf32[i] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+        }
+    }
+
+    // --- Lightning flash (뇌전) ---
+    // cloudiness > 0.85 일 때 결정적 gate 로 드문드문 플래시.
+    // gameTime을 30초 bucket으로 나눠 hash → 확률 체크. flash 길이 ≤ 120ms (real time).
+    var lightningLastRealMs = -99999;
+    function drawLightning() {
+        if (weather.cloudiness <= 0.85) return;
+        // bucket: 30s 게임시간 단위로 이벤트 발생 여부 결정
+        var bucket = (gameTime / 30000) | 0;
+        var h = ((bucket * 2654435761) >>> 0) / 4294967295;  // 0..1
+        // cloudiness 0.85~1.0 → 확률 0.05~0.25
+        var prob = (weather.cloudiness - 0.85) * 1.3 + 0.05;
+        var shouldFlash = h < prob;
+        var nowMs = performance.now();
+        if (shouldFlash && nowMs - lightningLastRealMs > 1500) {
+            lightningLastRealMs = nowMs;
+        }
+        var elapsed = nowMs - lightningLastRealMs;
+        if (elapsed > 120) return;
+        // 플래시 강도: 0~50ms 강, 50~120ms 감쇠
+        var strength = elapsed < 50 ? (0.55 - elapsed / 50 * 0.25) : (0.3 * (1 - (elapsed - 50) / 70));
+        if (strength <= 0) return;
+        // 하늘 영역(horizon 위)만 백색 섞기, 지표는 약하게
+        var horizonY = (camera && camera.horizon) ? camera.horizon : (SCR_H * 0.5) | 0;
+        for (var y = 0; y < SCR_H; y++) {
+            var k = y < horizonY ? strength : strength * 0.35;
+            var base = y * SCR_W;
+            for (var x = 0; x < SCR_W; x++) {
+                var bg = buf32[base + x];
+                var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
+                var nR = (bR + (250 - bR) * k) | 0;
+                var nG = (bG + (250 - bG) * k) | 0;
+                var nB = (bB + (255 - bB) * k) | 0;
+                buf32[base + x] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
+            }
+        }
+    }
+
     // --- DrawMinimap (디버그용, 좌하단) ---
     function DrawMinimap() {
         var MM_SIZE = 108;
@@ -2059,6 +2302,9 @@
         wave.time += 0.04;
         DrawBackground();
         Render();
+        drawNearFog();
+        drawPrecipitation();
+        drawLightning();
         DrawMinimap();
         DrawBoat();
         DrawSkyMap();
