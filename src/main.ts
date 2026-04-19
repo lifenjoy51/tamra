@@ -15,7 +15,7 @@ import {
     FRAME_INTERVAL, FRAME_EPSILON,
 } from './state';
 import { heightMeters } from './terrain';
-import { altitude, colormap, slotTiles, loadImage, loadTile, ensureTilesLoaded, initTiles } from './tiles';
+import { altitude, colormap, slotTiles, loadTile, ensureTilesLoaded, initTiles } from './tiles';
 import { computeWind } from './physics/wind';
 import { polarFor, computeSail, updateShipSpeed } from './physics/sail';
 import { computeCurrent } from './physics/current';
@@ -33,6 +33,10 @@ import {
 import { DrawVerticalLine, Render, PX_PER_RAD_H } from './render/voxel';
 import { DrawBackground } from './render/background';
 import { UpdateCamera, moveBoat } from './render/camera';
+import { drawNearFog, drawPrecipitation, drawLightning } from './render/effects';
+import { DrawMinimap, mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
+import { DrawBoat, initBoatSprite, boatSprite } from './render/boat-sprite';
+import { DrawSkyMap } from './render/skymap';
 
 (async function () {
 
@@ -41,13 +45,12 @@ var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
 var FOG_LAND_R = 90,  FOG_LAND_G = 100, FOG_LAND_B = 120;
 
 // --- 초기 로드: tile_index + 시작 지역 5x5 + boat 스프라이트 ---
-var boatImg;
 var startGx = 0, startGy = 0;
 try {
     var tilesInit = await initTiles();
     startGx = tilesInit.startGx;
     startGy = tilesInit.startGy;
-    boatImg = await loadImage('boat.png');
+    await initBoatSprite();
     window.__startGx = startGx;
     window.__startGy = startGy;
     window.__altitude = altitude;
@@ -111,8 +114,6 @@ var ROT_STEP = Math.PI / 180;  // 초기 1°, [ / ] 로 절반/두배
 var MOVE_STEP = 1;             // 초기 1 world unit, , / . 로 절반/두배
 var ROT_STEP_MIN = Math.PI / 1440, ROT_STEP_MAX = Math.PI / 4;   // 0.125° ~ 45°
 var MOVE_STEP_MIN = 0.0625, MOVE_STEP_MAX = 64;                   // 1/16 ~ 64 unit
-var minimapStride = 24;
-var MM_STRIDE_MIN = 0.25, MM_STRIDE_MAX = 2048;
 
 // --- Audio (Web Audio) ---
 // 절차 생성 — 외부 asset 없음(단일 HTML 유지).
@@ -242,10 +243,10 @@ document.onkeydown = function(e) {
         case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
         case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
         case 187: // '=' / '+' : 미니맵 확대
-            minimapStride = Math.max(MM_STRIDE_MIN, minimapStride / 1.5);
+            mmState.stride = Math.max(MM_STRIDE_MIN, mmState.stride / 1.5);
             break;
         case 189: // '-' : 미니맵 축소
-            minimapStride = Math.min(MM_STRIDE_MAX, minimapStride * 1.5);
+            mmState.stride = Math.min(MM_STRIDE_MAX, mmState.stride * 1.5);
             break;
         case 188: // ',' : 이동 속도 ÷2
             MOVE_STEP = Math.max(MOVE_STEP_MIN, MOVE_STEP / 2);
@@ -284,345 +285,6 @@ document.onkeyup = function(e) {
 // 첫 포인터 제스처에서도 AudioContext resume (iOS Safari 대응)
 document.addEventListener('pointerdown', resumeAudio, { once: false });
 
-// --- Precipitation (비·눈 파티클) ---
-// 사전 할당 ~300개. 화면 좌표계에서 직접 이동/그리기 → 저비용.
-// precipitation=0이면 drawPrecipitation 즉시 리턴.
-var PRECIP_MAX = 300;
-var precipX = new Float32Array(PRECIP_MAX);
-var precipY = new Float32Array(PRECIP_MAX);
-(function initPrecip() {
-    for (var i = 0; i < PRECIP_MAX; i++) {
-        precipX[i] = Math.random() * SCR_W;
-        precipY[i] = Math.random() * SCR_H;
-    }
-})();
-function drawPrecipitation() {
-    var intensity = weather.precipitation;
-    if (intensity <= 0.001) return;
-    var isSnow = weather.precipType === 'snow';
-    var active = (PRECIP_MAX * intensity) | 0;
-    // 바람 기반 경사: 풍속·풍향 일부 반영. 화면 상 x축 방향 성분만 쓰면 과함 → 완만히.
-    // wind.angleRad: 0=북(바람이 북에서 불어옴). 동쪽 성분 = -sin(angleRad)*speed
-    var windX = -Math.sin(wind.angleRad) * wind.speedMS;
-    var driftX = windX * 0.18;             // px/frame 근사
-    var fallY = isSnow ? 1.2 : 5.5;        // 눈은 느리게, 비는 빠르게
-    // 지평선 아래엔 안 떨어짐(배/바다 위로 보이는 효과는 없으니 전 화면 허용)
-    var rainCol = 0xFFE0C89C;   // light blue-gray (BGR)
-    var snowCol = 0xFFF0F0FF;
-    for (var i = 0; i < active; i++) {
-        var x = precipX[i] + driftX;
-        var y = precipY[i] + fallY;
-        if (y >= SCR_H || x < 0 || x >= SCR_W) {
-            // 재생성: 화면 위쪽 랜덤
-            x = Math.random() * SCR_W;
-            y = Math.random() * -SCR_H * 0.25;
-        }
-        precipX[i] = x;
-        precipY[i] = y;
-        var ix = x | 0, iy = y | 0;
-        if (iy < 0 || iy >= SCR_H || ix < 0 || ix >= SCR_W) continue;
-        if (isSnow) {
-            buf32[iy * SCR_W + ix] = snowCol;
-        } else {
-            // 비: 짧은 3px 사선 (driftX 방향)
-            var dxSign = driftX < 0 ? -1 : 1;
-            for (var k = 0; k < 3; k++) {
-                var lx = ix - k * dxSign;
-                var ly = iy - k;
-                if (ly < 0 || ly >= SCR_H || lx < 0 || lx >= SCR_W) break;
-                buf32[ly * SCR_W + lx] = rainCol;
-            }
-        }
-    }
-}
-
-// --- Near-distance fog (저시정 안개) ---
-// visibilityCoef < 0.7 일 때 전체 화면에 옅은 회백색 veil 덧입힘.
-// Render()의 거리 fog와 별개로, 근거리까지 감소된 시정을 강화.
-function drawNearFog() {
-    var vis = weather.visibilityCoef;
-    if (vis >= 0.7) return;
-    // strength: vis 0.7→0, 0.3→0.4
-    var strength = (0.7 - vis) * 1.0;
-    if (strength > 0.5) strength = 0.5;
-    // 안개 색: 주간 = 연회색, 야간 = 짙은 청색
-    var fR, fG, fB;
-    if (sun.altDeg > 5) { fR = 200; fG = 200; fB = 205; }
-    else if (sun.altDeg > -6) { fR = 140; fG = 130; fB = 130; }
-    else { fR = 30; fG = 34; fB = 44; }
-    var total = SCR_W * SCR_H;
-    for (var i = 0; i < total; i++) {
-        var bg = buf32[i];
-        var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
-        var nR = (bR + (fR - bR) * strength) | 0;
-        var nG = (bG + (fG - bG) * strength) | 0;
-        var nB = (bB + (fB - bB) * strength) | 0;
-        buf32[i] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
-    }
-}
-
-// --- Lightning flash (뇌전) ---
-// cloudiness > 0.85 일 때 결정적 gate 로 드문드문 플래시.
-// gameTime을 30초 bucket으로 나눠 hash → 확률 체크. flash 길이 ≤ 120ms (real time).
-var lightningLastRealMs = -99999;
-function drawLightning() {
-    if (weather.cloudiness <= 0.85) return;
-    // bucket: 30s 게임시간 단위로 이벤트 발생 여부 결정
-    var bucket = (timeRef.gameTime / 30000) | 0;
-    var h = ((bucket * 2654435761) >>> 0) / 4294967295;  // 0..1
-    // cloudiness 0.85~1.0 → 확률 0.05~0.25
-    var prob = (weather.cloudiness - 0.85) * 1.3 + 0.05;
-    var shouldFlash = h < prob;
-    var nowMs = performance.now();
-    if (shouldFlash && nowMs - lightningLastRealMs > 1500) {
-        lightningLastRealMs = nowMs;
-    }
-    var elapsed = nowMs - lightningLastRealMs;
-    if (elapsed > 120) return;
-    // 플래시 강도: 0~50ms 강, 50~120ms 감쇠
-    var strength = elapsed < 50 ? (0.55 - elapsed / 50 * 0.25) : (0.3 * (1 - (elapsed - 50) / 70));
-    if (strength <= 0) return;
-    // 하늘 영역(horizon 위)만 백색 섞기, 지표는 약하게
-    var horizonY = (camera && camera.horizon) ? camera.horizon : (SCR_H * 0.5) | 0;
-    for (var y = 0; y < SCR_H; y++) {
-        var k = y < horizonY ? strength : strength * 0.35;
-        var base = y * SCR_W;
-        for (var x = 0; x < SCR_W; x++) {
-            var bg = buf32[base + x];
-            var bR = bg & 0xFF, bG = (bg >> 8) & 0xFF, bB = (bg >> 16) & 0xFF;
-            var nR = (bR + (250 - bR) * k) | 0;
-            var nG = (bG + (250 - bG) * k) | 0;
-            var nB = (bB + (255 - bB) * k) | 0;
-            buf32[base + x] = 0xFF000000 | (nB << 16) | (nG << 8) | nR;
-        }
-    }
-}
-
-// --- DrawMinimap (디버그용, 좌하단) ---
-function DrawMinimap() {
-    var MM_SIZE = 108;
-    var MM_X = 6;
-    var MM_Y = SCR_H - MM_SIZE - 6;
-    var STRIDE = minimapStride; // 월드 픽셀/미니맵 픽셀 (- / = 키로 조절)
-
-    // 테두리
-    for (var i = -1; i <= MM_SIZE; i++) {
-        if (MM_X + i >= 0 && MM_X + i < SCR_W) {
-            if (MM_Y - 1 >= 0) buf32[(MM_Y - 1) * SCR_W + MM_X + i] = 0xFFC8C8C8;
-            if (MM_Y + MM_SIZE < SCR_H) buf32[(MM_Y + MM_SIZE) * SCR_W + MM_X + i] = 0xFFC8C8C8;
-        }
-        if (MM_Y + i >= 0 && MM_Y + i < SCR_H) {
-            if (MM_X - 1 >= 0) buf32[(MM_Y + i) * SCR_W + MM_X - 1] = 0xFFC8C8C8;
-            if (MM_X + MM_SIZE < SCR_W) buf32[(MM_Y + i) * SCR_W + MM_X + MM_SIZE] = 0xFFC8C8C8;
-        }
-    }
-
-    // 지형
-    var half = MM_SIZE >> 1;
-    for (var my = 0; my < MM_SIZE; my++) {
-        var wy = (boat.gy + (my - half) * STRIDE) | 0;
-        var rowBase = (MM_Y + my) * SCR_W + MM_X;
-        for (var mx = 0; mx < MM_SIZE; mx++) {
-            var wx = (boat.gx + (mx - half) * STRIDE) | 0;
-            var off = ((wy & MASK) << SHIFT) + (wx & MASK);
-            var alt = altitude[off];
-            var c;
-            if (alt <= SEA) {
-                var d = SEA - alt;
-                c = d > 20 ? 0xFF5A2818 : 0xFF8C3C20;
-            } else {
-                var a = alt - SEA;
-                if      (a < 20)  c = 0xFF3A6840;
-                else if (a < 60)  c = 0xFF3C5A70;
-                else if (a < 120) c = 0xFF4878A0;
-                else              c = 0xFFB0B0B0;
-            }
-            buf32[rowBase + mx] = c;
-        }
-    }
-
-    // 타일 경계 (세로/가로 얇은 선)
-    var centerTx = Math.floor(boat.gx / TILE_SIZE);
-    var centerTy = Math.floor(boat.gy / TILE_SIZE);
-    var gridC = 0xFF808080;
-    for (var dt = -2; dt <= 2; dt++) {
-        // 세로 경계
-        var bdX = (centerTx + dt) * TILE_SIZE - boat.gx;
-        var mmx = (half + bdX / STRIDE) | 0;
-        if (mmx >= 0 && mmx < MM_SIZE) {
-            for (var y = 0; y < MM_SIZE; y += 2) buf32[(MM_Y + y) * SCR_W + MM_X + mmx] = gridC;
-        }
-        // 가로 경계
-        var bdY = (centerTy + dt) * TILE_SIZE - boat.gy;
-        var mmy = (half + bdY / STRIDE) | 0;
-        if (mmy >= 0 && mmy < MM_SIZE) {
-            for (var x = 0; x < MM_SIZE; x += 2) buf32[(MM_Y + mmy) * SCR_W + MM_X + x] = gridC;
-        }
-    }
-
-    // 보트 위치 (중앙) + 방향 화살표
-    var cx = MM_X + half, cy = MM_Y + half;
-    var RED = 0xFF0000FF;
-    for (var dy = -1; dy <= 1; dy++)
-        for (var dx = -1; dx <= 1; dx++)
-            buf32[(cy + dy) * SCR_W + cx + dx] = RED;
-    // 방향: 전진 방향이 -sin, -cos (UpdateCamera와 동일)
-    var fx = -Math.sin(boat.angle), fy = -Math.cos(boat.angle);
-    for (var k = 2; k <= 6; k++) {
-        var px = (cx + fx * k) | 0;
-        var py = (cy + fy * k) | 0;
-        if (px >= MM_X && px < MM_X + MM_SIZE && py >= MM_Y && py < MM_Y + MM_SIZE)
-            buf32[py * SCR_W + px] = RED;
-    }
-}
-
-// --- DrawBoat (boat.png 스프라이트) ---
-// --- 하늘보기 (polar azimuthal projection) ---
-// 중심 = 천정, 외곽 = 지평선. 화면 위쪽 = 배 진행 방향.
-// 낮엔 태양·하늘색, 밤엔 별. 토글 상태에선 시간 정지.
-function DrawSkyMap() {
-    if (!uiFlags.skyMapOn) return;
-    var cx = SCR_W / 2;
-    var cy = SCR_H / 2;
-    var R = Math.min(SCR_W, SCR_H) / 2 - 14;
-
-    // 하늘 색: 태양 고도 기반으로 낮·황혼·밤 blend (updateSky와 동일 규칙)
-    var dayW   = (sun.altDeg - 5) / 10;     if (dayW < 0) dayW = 0;   else if (dayW > 1) dayW = 1;
-    var nightW = (-6 - sun.altDeg) / 6;     if (nightW < 0) nightW = 0; else if (nightW > 1) nightW = 1;
-    var duskW  = 1 - dayW - nightW;         if (duskW < 0) duskW = 0;
-    var bR = SKY_DAY_Z[0]*dayW + SKY_DUSK_Z[0]*duskW + SKY_NIGHT_Z[0]*nightW;
-    var bG = SKY_DAY_Z[1]*dayW + SKY_DUSK_Z[1]*duskW + SKY_NIGHT_Z[1]*nightW;
-    var bB = SKY_DAY_Z[2]*dayW + SKY_DUSK_Z[2]*duskW + SKY_NIGHT_Z[2]*nightW;
-    // 전체 배경 (원 밖 영역은 검정)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.96)';
-    ctx.fillRect(0, 0, SCR_W, SCR_H);
-    // 원반 (하늘)
-    ctx.fillStyle = 'rgb(' + (bR|0) + ',' + (bG|0) + ',' + (bB|0) + ')';
-    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
-
-    // 태양 (altDeg > -2일 때)
-    if (sun.altDeg > -2) {
-        var sDlt = sun.azRad + camera.angle;
-        var sR2 = (Math.PI / 2 - sun.altRad) / (Math.PI / 2) * R;
-        var spx = cx + Math.sin(sDlt) * sR2;
-        var spy = cy - Math.cos(sDlt) * sR2;
-        var sunR, sunG, sunB;
-        if (sun.altDeg > 15)      { sunR = 255; sunG = 245; sunB = 220; }
-        else if (sun.altDeg > 0)  { sunR = 255; sunG = 190; sunB = 130; }
-        else                       { sunR = 240; sunG = 130; sunB =  80; }
-        // 후광
-        var grad = ctx.createRadialGradient(spx, spy, 2, spx, spy, 24);
-        grad.addColorStop(0, 'rgba(' + sunR + ',' + sunG + ',' + sunB + ',1)');
-        grad.addColorStop(1, 'rgba(' + sunR + ',' + sunG + ',' + sunB + ',0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath(); ctx.arc(spx, spy, 24, 0, Math.PI * 2); ctx.fill();
-        // 디스크
-        ctx.fillStyle = 'rgb(' + sunR + ',' + sunG + ',' + sunB + ')';
-        ctx.beginPath(); ctx.arc(spx, spy, 5, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // 별 (밤 구간에서만, 낮엔 가시성 0)
-    if (sun.altDeg < 0) {
-        var nightFade = (-sun.altDeg) / 6;
-        if (nightFade > 1) nightFade = 1;
-        for (var si = 0; si < STARS.length; si++) {
-            var star = STARS[si];
-            var st = starState[si];
-            if (st.altRad < 0) continue;
-            var dlt = st.azRad + camera.angle;
-            var r = (Math.PI / 2 - st.altRad) / (Math.PI / 2) * R;
-            var px = cx + Math.sin(dlt) * r;
-            var py = cy - Math.cos(dlt) * r;
-            var mag = star.mag, size, alpha;
-            if (mag < 0)      { size = 3;   alpha = 1.0;  }
-            else if (mag < 1) { size = 2.5; alpha = 0.95; }
-            else if (mag < 2) { size = 2;   alpha = 0.85; }
-            else if (mag < 3) { size = 1.5; alpha = 0.7;  }
-            else              { size = 1;   alpha = 0.55; }
-            alpha *= nightFade;
-            ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
-            ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
-        }
-    }
-
-    // 행성 (태양이 지평선 아래일 때만 표시 — 낮엔 태양빛에 묻혀 안 보임)
-    if (sun.altDeg < 0) {
-        for (var pi = 0; pi < PLANETS.length; pi++) {
-            var ps = planetState[pi];
-            if (ps.altRad < 0) continue;
-            if (ps.mag > 6) continue;  // 천왕성/해왕성 맨눈 한계 넘음
-            var dltp = ps.azRad + camera.angle;
-            var rp = (Math.PI / 2 - ps.altRad) / (Math.PI / 2) * R;
-            var ppx = cx + Math.sin(dltp) * rp;
-            var ppy = cy - Math.cos(dltp) * rp;
-            var col = PLANETS[pi].color;
-            var cR = col & 0xFF, cG = (col >> 8) & 0xFF, cB = (col >> 16) & 0xFF;
-            var psize = ps.mag < -3 ? 3 : ps.mag < 0 ? 2.5 : ps.mag < 2 ? 2 : 1.5;
-            ctx.fillStyle = 'rgba(' + cR + ',' + cG + ',' + cB + ',0.95)';
-            ctx.beginPath(); ctx.arc(ppx, ppy, psize, 0, Math.PI * 2); ctx.fill();
-        }
-    }
-
-    // 달 (태양 지평선 아래일 때만 — 낮엔 태양빛에 묻혀 안 보임)
-    if (moonState.altRad > 0 && sun.altDeg < 0) {
-        var dlm = moonState.azRad + camera.angle;
-        var rm = (Math.PI / 2 - moonState.altRad) / (Math.PI / 2) * R;
-        var mmx = cx + Math.sin(dlm) * rm;
-        var mmy = cy - Math.cos(dlm) * rm;
-        var MR2 = 7;
-        var ill2 = moonState.illumination;
-        var side2 = Math.sin(moonState.phase) >= 0 ? 1 : -1;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(mmx, mmy, MR2, 0, Math.PI * 2);
-        ctx.clip();
-        // 어두운 면: 낮엔 배경 그대로, 밤엔 어두운 회색 반투명
-        if (sun.altDeg < 0) {
-            ctx.fillStyle = 'rgba(60, 65, 80, 0.75)';
-            ctx.fillRect(mmx - MR2, mmy - MR2, MR2 * 2, MR2 * 2);
-        }
-        ctx.fillStyle = 'rgb(240, 245, 250)';
-        if (ill2 >= 0.97) {
-            ctx.fillRect(mmx - MR2, mmy - MR2, MR2 * 2, MR2 * 2);
-        } else if (ill2 > 0.03) {
-            var t = side2 * (1 - 2 * ill2) * MR2;
-            if (side2 > 0) ctx.fillRect(mmx + t, mmy - MR2, MR2 - t, MR2 * 2);
-            else           ctx.fillRect(mmx - MR2, mmy - MR2, MR2 + t, MR2 * 2);
-        }
-        ctx.restore();
-    }
-
-    // 배 방향 화살표 (화면 위쪽 = 배가 향한 곳)
-    ctx.fillStyle = 'rgba(255, 230, 180, 0.8)';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('▲', cx, cy - R - 10);
-    // 범례
-    ctx.textAlign = 'left';
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(200, 220, 255, 0.7)';
-    ctx.fillText('K: 닫기   (중심=천정, 위=배 방향, 시간정지)', 12, SCR_H - 12);
-}
-
-function DrawBoat() {
-    // 파도 흔들림
-    var wt = wave.time;
-    var bob = Math.sin(boat.gx * wave.swell.dx + boat.gy * wave.swell.dy + wt * wave.swell.speed) * 1.5;
-
-    // Flip: buf → canvas 후 이미지를 ctx 위에 직접 그리기
-    imagedata.data.set(buf8);
-    ctx.putImageData(imagedata, 0, 0);
-
-    // 배 위치: 화면 중앙에서 아래쪽 (수평선 밑으로 선체가 내려오도록)
-    // 2x 스케일 — 해상도 800x600에 맞춰 보트 시각 크기 유지
-    var BOAT_Y_OFFSET = 78;
-    var BOAT_SCALE = 0.89;
-    var dw = boatImg.width * BOAT_SCALE, dh = boatImg.height * BOAT_SCALE;
-    var sx = (SCR_W - dw) / 2 | 0;
-    var sy = (SCR_H - dh) / 2 + BOAT_Y_OFFSET + bob | 0;
-    ctx.drawImage(boatImg, 0, 0, boatImg.width, boatImg.height, sx, sy, dw, dh);
-}
 
 // --- Main Draw loop (20fps cap) ---
 // rAF 주기(16.67ms)의 정수배 근처에서 지터로 인한 fps 진동을 막기 위해
@@ -664,7 +326,7 @@ function UpdateDebug() {
         'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
         'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
         'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
-        'MMZoom:  1:' + minimapStride + '\n' +
+        'MMZoom:  1:' + mmState.stride + '\n' +
         'FPS:     ' + frameStats.fpsCurrent + '\n' +
         'Frame:   ' + frameStats.frameTimeEma.toFixed(2) + 'ms';
 }
