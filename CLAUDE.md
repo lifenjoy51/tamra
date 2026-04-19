@@ -76,14 +76,17 @@ UpdateCamera → DrawBackground(sky + 별 + 행성 + 달 + 태양)
 | **바람** | `computeWind` L971 | Hadley/Ferrel/Polar + ITCZ + 아시아 몬순 + 결정적 noise |
 | **해류** | `computeCurrent` L506 | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
 | **파도** | `computeWaves` L539 | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
-| **별** | `STARS` L560 (~70개), `starState` 실시간 alt/az | J2000 + GMST → LST → hour angle |
-| **행성** | `PLANETS` L696 (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
-| **달** | `updateMoon` L776, `moonState` 위상 | Meeus 간이식 (L', D, M, M', F) → λ/β |
-| **날씨** | `computeWeather` L831 | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef |
+| **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 + GMST → LST → hour angle + 대기 굴절 twinkle |
+| **은하수** | `MILKYWAY`, `milkyState` | galactic plane b=0 → J2000 NGP 변환 (l=5° 간격 72점) + 밀도 가중 |
+| **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
+| **달** | `updateMoon`, `moonState` 위상·halo | Meeus 간이식 → λ/β. cloudiness > 0.3 시 halo 가산 |
+| **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef |
+| **대기광 / Halo** | `skyGlowX/Y` (separable), 태양 halo profile | 황혼 비대칭 붉은 띠(방위별), 태양 halo 고도별 반경·색 |
 
 ### 시간 가속
 
-- `gameTime` (L916, ms 단위), `TIME_SPEED` (L113, 초기 120배속)
+- `gameTime` (ms 단위), `TIME_SPEED` (초기 120배속)
+- 디버그: `window.__advanceHours(h)`, `window.__setTimeSpeed(s)` — 콘솔에서 시간 점프/속도 조작 (검증 편의)
 - T/Y 키로 ÷2/×2 (범위 1~7200). 하늘보기(K) 켜진 동안 시간 정지.
 
 ### 하늘보기 (K키)
