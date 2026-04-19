@@ -14,6 +14,8 @@ import {
     BASE_SAIL_SPEED, BASE_CAM_METERS, CAM_HEIGHT_MARGIN,
     FRAME_INTERVAL, FRAME_EPSILON,
 } from './state';
+import { heightMeters } from './terrain';
+import { altitude, colormap, slotTiles, loadImage, loadTile, ensureTilesLoaded, initTiles } from './tiles';
 
 (async function () {
 
@@ -189,245 +191,23 @@ function cloudAlphaAt(x, y, horizonY) {
     return cloudFull[fy * SCR_W + x] / 255;
 }
 
-// --- 구간별 선형 매핑 (piecewise linear) ---
-// Uint8 값 → 실제 미터 역변환 LUT (렌더링 시 구간별 scale 보정)
-var SEGMENTS = [
-    [-8000, -200,   0,  24],
-    [ -200,  -10,  24,  48],
-    [  -10,    0,  48,  64],
-    [    0,   20,  64, 112],
-    [   20,  200, 112, 160],
-    [  200, 1000, 160, 208],
-    [ 1000, 5000, 208, 255]
-];
-var heightMeters = new Float32Array(256);
-for (var i = 0; i < 256; i++) {
-    for (var s = 0; s < SEGMENTS.length; s++) {
-        var seg = SEGMENTS[s];
-        if (i <= seg[3] || s === SEGMENTS.length - 1) {
-            var t = (seg[3] === seg[2]) ? 0 : (i - seg[2]) / (seg[3] - seg[2]);
-            t = t < 0 ? 0 : t > 1 ? 1 : t;
-            heightMeters[i] = seg[0] + t * (seg[1] - seg[0]);
-            break;
-        }
-    }
-}
-
-// --- Colormap 생성 (heightmap → RGB + hillshading) ---
-// generate_maps.py와 동일 알고리즘. 타일 경계는 edge replication.
-// TODO: 인접 타일 로드되면 경계 1px 재계산하여 이음매 제거
-// gtx, gty는 글로벌 타일 좌표 (디더링 좌표를 타일 경계에서 연속시키기 위함)
-function generateColormap(h, W, H, gtx, gty) {
-    W = W || TILE_SIZE;
-    H = H || TILE_SIZE;
-    gtx = gtx || 0;
-    gty = gty || 0;
-    var goxX = gtx * TILE_SIZE; // 글로벌 디더링 오프셋
-    var goxY = gty * TILE_SIZE;
-    var cmap = new Uint32Array(W * H);
-    // 광원: 북서 45도
-    var LX = Math.cos(Math.PI/4) * Math.sin(Math.PI * 315/180);
-    var LY = Math.cos(Math.PI/4) * Math.cos(Math.PI * 315/180);
-    var LZ = Math.sin(Math.PI/4);
-    var SLOPE = 2.0, SLOPE_SQ = 4.0;
-
-    for (var y = 0; y < H; y++) {
-        var yUp = y > 0 ? y - 1 : 0;
-        var yDn = y < H - 1 ? y + 1 : H - 1;
-        var rowBase = y * W;
-        var rowUp = yUp * W, rowDn = yDn * W;
-        for (var x = 0; x < W; x++) {
-            var xL = x > 0 ? x - 1 : 0;
-            var xR = x < W - 1 ? x + 1 : W - 1;
-            var idx = rowBase + x;
-            var hi = h[idx];
-
-            // Sobel gradient (edge replication)
-            var dx = h[rowBase + xR] - h[rowBase + xL];
-            var dy = h[rowDn + x]    - h[rowUp + x];
-
-            // Hillshade
-            var shade = -dx * SLOPE * LX - dy * SLOPE * LY + LZ;
-            shade /= Math.sqrt(dx * dx * SLOPE_SQ + dy * dy * SLOPE_SQ + 1.0);
-            if (shade < 0) shade = 0;
-            else if (shade > 1) shade = 1;
-
-            // 디더링 노이즈 (글로벌 좌표 기준 → 타일 경계 연속)
-            var gX = goxX + x, gY = goxY + y;
-            var n = (((gX * 7 + gY * 13) ^ (gX + gY * 3)) & 15) - 7;
-
-            var r, g, b;
-            if (hi <= SEA) {
-                // 바다 — sqrt 커브로 shore 주변 연청록 대비 강조, 그 후 선형으로 심해 navy
-                var xd = (SEA - hi) * (1/SEA);
-                if (xd < 0) xd = 0; else if (xd > 1) xd = 1;
-                var tt = Math.sqrt(xd); // shore 근처 급변
-                r = 150 - tt * 132;  // 150 → 18
-                g = 200 - tt * 158;  // 200 → 42
-                b = 200 - tt * 100;  // 200 → 100
-                r += n * 0.3; g += n * 0.3; b += n * 0.3;
-                // 바다는 hillshading 적용 안함
-            } else {
-                // 육지 (고도별)
-                var a = hi - SEA;
-                var t;
-                if (a < 6) {
-                    r = 194; g = 178; b = 130;
-                } else if (a < 48) {
-                    t = (a - 6) / 42;
-                    r = 50 + t * 25;  g = 100 + t * 30;  b = 30 + t * 10;
-                } else if (a < 96) {
-                    t = (a - 48) / 48;
-                    r = 75 + t * 35;  g = 130 - t * 15;  b = 40 + t * 15;
-                } else if (a < 130) {
-                    t = (a - 96) / 34;
-                    r = 110 + t * 30; g = 105 - t * 15;  b = 55 + t * 10;
-                } else if (a < 155) {
-                    t = (a - 130) / 25;
-                    r = 140 - t * 15; g = 90 - t * 10;   b = 65 + t * 15;
-                } else {
-                    t = (a - 155) / 36;
-                    if (t > 1) t = 1;
-                    r = 125 + t * 30; g = 80 + t * 30;   b = 80 + t * 30;
-                }
-                r += n * 0.5; g += n * 0.5; b += n * 0.4;
-                // hillshading
-                var light = 0.35 + 0.65 * shade;
-                r *= light; g *= light; b *= light;
-            }
-
-            r = r < 0 ? 0 : r > 255 ? 255 : r | 0;
-            g = g < 0 ? 0 : g > 255 ? 255 : g | 0;
-            b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
-            cmap[idx] = 0xFF000000 | (b << 16) | (g << 8) | r;
-        }
-    }
-    return cmap;
-}
-
-// --- Load PNG heightmap & colormap ---
-function loadImage(src) {
-    return new Promise(function(resolve, reject) {
-        var img = new Image();
-        img.onload = function() { resolve(img); };
-        img.onerror = reject;
-        img.src = src;
-    });
-}
-
-// --- 타일 시스템 ---
-// 4x4 슬롯 버퍼 (2048x2048). 각 월드 타일 (tx, ty)는 슬롯 (tx%4, ty%4)에 배치.
-// 글로벌 좌표 & 2047 = 버퍼 위치 자동 매핑 (3x3 이웃 내 타일은 슬롯 충돌 없음).
-var altitude = new Uint8Array(SIZE * SIZE);
-var colormap = new Uint32Array(SIZE * SIZE);
-altitude.fill(SEA); // 기본값 바다
-window.__altitude = altitude;
-window.__colormap = colormap;
-
-var slotTiles = new Array(BUF_TILES * BUF_TILES).fill(null); // key of tile in each slot
-var loadingTiles = {};  // key → Promise
-var tileIndex = null;
-
-function pad2(n) { return n < 10 ? '0' + n : '' + n; }
-
-// 타일 하나를 슬롯에 로드 (async). 이미 로드 중/완료면 스킵.
-async function loadTile(tx, ty) {
-    // 경도 wrap, 위도 clamp
-    tx = ((tx % WORLD_TILES_X) + WORLD_TILES_X) % WORLD_TILES_X;
-    if (ty < 0 || ty >= WORLD_TILES_Y) return;
-
-    var key = tx + '_' + ty;
-    var slotI = tx % BUF_TILES;
-    var slotJ = ty % BUF_TILES;
-    var slotIdx = slotJ * BUF_TILES + slotI;
-
-    if (slotTiles[slotIdx] === key) return;       // 이미 로드됨
-    if (loadingTiles[key]) return loadingTiles[key]; // 로딩 중
-
-    var promise = (async function() {
-        var heightRaw = new Uint8Array(TILE_SIZE * TILE_SIZE);
-        var hasFile = tileIndex && tileIndex.tiles && tileIndex.tiles[key];
-
-        if (hasFile) {
-            try {
-                var img = await loadImage('tiles/h_' + pad2(tx) + '_' + pad2(ty) + '.png');
-                tmpCtx.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
-                tmpCtx.drawImage(img, 0, 0);
-                var data = tmpCtx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;
-                for (var i = 0; i < TILE_SIZE * TILE_SIZE; i++) heightRaw[i] = data[i * 4];
-            } catch (e) {
-                heightRaw.fill(SEA); // 로드 실패 시 바다
-            }
-        } else {
-            heightRaw.fill(SEA); // 인덱스에 없음 = 순수 바다
-        }
-
-        // 슬롯에 쓰기 (altitude + colormap)
-        var tileCmap = generateColormap(heightRaw, TILE_SIZE, TILE_SIZE, tx, ty);
-        var bx0 = slotI * TILE_SIZE;
-        var by0 = slotJ * TILE_SIZE;
-        for (var ly = 0; ly < TILE_SIZE; ly++) {
-            var src = ly * TILE_SIZE;
-            var dst = (by0 + ly) * SIZE + bx0;
-            for (var lx = 0; lx < TILE_SIZE; lx++) {
-                var h = heightRaw[src + lx];
-                altitude[dst + lx] = h <= SEA ? SEA : h;
-                colormap[dst + lx] = tileCmap[src + lx];
-            }
-        }
-        slotTiles[slotIdx] = key;
-        delete loadingTiles[key];
-    })();
-
-    loadingTiles[key] = promise;
-    return promise;
-}
-
-// 현재 보트 위치 기준 5x5 타일 로드 (렌더 거리 800 커버)
-function ensureTilesLoaded() {
-    var ctx = Math.floor(boat.gx / TILE_SIZE);
-    var cty = Math.floor(boat.gy / TILE_SIZE);
-    for (var dy = -2; dy <= 2; dy++) {
-        for (var dx = -2; dx <= 2; dx++) {
-            loadTile(ctx + dx, cty + dy);
-        }
-    }
-}
-
-var tmpC, tmpCtx, boatImg;
+// --- 초기 로드: tile_index + 시작 지역 5x5 + boat 스프라이트 ---
+var boatImg;
+var startGx = 0, startGy = 0;
 try {
-    // 1. 타일 인덱스 + 보트 이미지 로드
-    var idxRes = await fetch('tiles/tile_index.json');
-    tileIndex = await idxRes.json();
+    var tilesInit = await initTiles();
+    startGx = tilesInit.startGx;
+    startGy = tilesInit.startGy;
     boatImg = await loadImage('boat.png');
-
-    tmpC = document.createElement('canvas');
-    tmpC.width = TILE_SIZE; tmpC.height = TILE_SIZE;
-    tmpCtx = tmpC.getContext('2d');
-
-    // 2. 시작 위치: 북위 24°, 경도 126.55°E (하지 태양이 천정 지나는 위도 근처)
-    //    gy = (ORIGIN_LAT - 24) / DEG_PER_PIXEL = 66 * 240 = 15840
-    var startGx = 73572, startGy = 15840;
-
-    // 3. 초기 5x5 타일 로드 (완료 대기)
-    var startTx = Math.floor(startGx / TILE_SIZE);
-    var startTy = Math.floor(startGy / TILE_SIZE);
-    var initPromises = [];
-    for (var dy = -2; dy <= 2; dy++) {
-        for (var dx = -2; dx <= 2; dx++) {
-            initPromises.push(loadTile(startTx + dx, startTy + dy));
-        }
-    }
-    await Promise.all(initPromises);
-
-    // boat.gx, boat.gy는 아래 boat 선언 후 초기화
     window.__startGx = startGx;
     window.__startGy = startGy;
+    window.__altitude = altitude;
+    window.__colormap = colormap;
 } catch (e) {
     document.getElementById('loading').innerHTML =
         '로드 실패<br><br><small>터미널에서:<br>' +
-        '<b>cd ~/works/tamra && python3 -m http.server 8080</b><br>' +
-        '→ http://localhost:8080 접속</small>';
+        '<b>cd ~/works/tamra && npm run dev</b><br>' +
+        '→ http://localhost:8089 접속</small>';
     return;
 }
 
