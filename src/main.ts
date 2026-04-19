@@ -16,6 +16,11 @@ import {
 } from './state';
 import { heightMeters } from './terrain';
 import { altitude, colormap, slotTiles, loadImage, loadTile, ensureTilesLoaded, initTiles } from './tiles';
+import { computeWind } from './physics/wind';
+import { polarFor, computeSail, updateShipSpeed } from './physics/sail';
+import { computeCurrent } from './physics/current';
+import { computeWaves } from './physics/waves';
+import { computeWeather } from './physics/weather';
 
 (async function () {
 
@@ -221,108 +226,8 @@ debugEl.style.display = 'block';
 
 window.__wind = wind;
 
-// --- Sail (돛 효율) ---
-// boat.angle 과 wind.angleRad 의 상대각(AoA) → polar 계수
-//   IRONS  0..30°  0.05 (맞바람, 거의 못감)
-//   CLOSE  30..60° 0.55 (클로즈홀드)
-//   BEAM   60..120° 1.00 (빔리치, 최적)
-//   BROAD  120..160° 1.20 (브로드리치, 최고속)
-//   RUN    160..180° 0.90 (런닝, 세일 그림자 효과)
-// wind.speedMS / 8 (기준) 기준 0.3..1.8 clamp
-function polarFor(headingRad) {
-    var rel = headingRad - wind.angleRad;
-    rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    var aoa = Math.abs(rel);
-    if (aoa < Math.PI / 6)        return 0.05;
-    else if (aoa < Math.PI / 3)   return 0.55;
-    else if (aoa < 2 * Math.PI / 3) return 1.00;
-    else if (aoa < 8 * Math.PI / 9) return 1.20;
-    else                          return 0.90;
-}
-function computeSail() {
-    var rel = boat.angle - wind.angleRad;
-    rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    var aoa = Math.abs(rel);
-    if      (aoa < Math.PI / 6)     { sail.polar = 0.05; sail.mode = 'IRONS'; }
-    else if (aoa < Math.PI / 3)     { sail.polar = 0.55; sail.mode = 'CLOSE'; }
-    else if (aoa < 2 * Math.PI / 3) { sail.polar = 1.00; sail.mode = 'BEAM';  }
-    else if (aoa < 8 * Math.PI / 9) { sail.polar = 1.20; sail.mode = 'BROAD'; }
-    else                            { sail.polar = 0.90; sail.mode = 'RUN';   }
-    var wf = wind.speedMS / 8;
-    if (wf < 0.3) wf = 0.3; else if (wf > 1.8) wf = 1.8;
-    sail.windFactor = wf;
-}
-
-// 선체 속도 합성: 돛 추진 + 해류 drift → ground velocity
-function updateShipSpeed() {
-    var sMS = boat.sailUp ? sail.polar * sail.windFactor * BASE_SAIL_SPEED : 0;
-    ship.sailMS = sMS;
-    // 돛 추진: 선수 방향. boat.angle 0=북 기준 세계좌표 벡터 (-sin, -cos)
-    var sVx = -Math.sin(boat.angle) * sMS;
-    var sVy = -Math.cos(boat.angle) * sMS;
-    // 해류: flow direction (sin, -cos)
-    var cVx =  Math.sin(current.angleRad) * current.speedMS;
-    var cVy = -Math.cos(current.angleRad) * current.speedMS;
-    var vx = sVx + cVx, vy = sVy + cVy;
-    ship.groundMS = Math.hypot(vx, vy);
-    // 합성 방향 — 세계좌표 벡터 → 표준 방위
-    ship.groundDirRad = Math.atan2(vx, -vy);  // 0=북, π/2=동
-    if (ship.groundDirRad < 0) ship.groundDirRad += 2 * Math.PI;
-}
 window.__sail = sail;
-
-// --- Current (해류) ---
-// 대양 대순환 근사 — flow direction (해류가 "흐르는" 방향, 바람과 반대 관습)
-// 0 = 북쪽으로 흐름, π/2 = 동쪽으로 흐름
-function computeCurrent() {
-    var lat = sun.lat, lon = sun.lon;
-    var a = Math.abs(lat);
-    var dir, spd;
-    if      (a < 20) { dir = 270; spd = 0.4; }    // 적도류 (W)
-    else if (a < 35) { dir = 90;  spd = 0.2; }    // 아열대 환류 동쪽 가장자리
-    else if (a < 55) { dir = 90;  spd = 0.3; }    // 편서풍대 (북태평양)
-    else if (a < 65) { dir = 270; spd = 0.2; }    // 아극지 반류
-    else             { dir = 90;  spd = 0.1; }    // 극지
-
-    // 서안경계류 — 쿠로시오 (아시아 동안, 북반구)
-    if (lon > 110 && lon < 150 && lat > 20 && lat < 45) {
-        dir = 45; spd = 1.2;
-    }
-    // 남반구 대칭 (동호주 해류)
-    if (lon > 140 && lon < 170 && lat > -45 && lat < -20) {
-        dir = 225; spd = 1.0;
-    }
-
-    // 결정적 noise (위치·년도)
-    var seed = (Math.floor(lat * 2) + Math.floor(lon * 2) * 11 + sun.year * 7) >>> 0;
-    var n = ((seed * 2654435761) >>> 0) / 4294967295;
-    dir += (n - 0.5) * 20;
-    spd *= 0.8 + n * 0.4;
-
-    dir = ((dir % 360) + 360) % 360;
-    current.angleRad = dir * Math.PI / 180;
-    current.speedMS = spd;
-}
 window.__current = current;
-
-// --- Wave 방향·진폭을 바람·해류에 연동 ---
-// swell(너울) ← 해류, mid/ripple ← 바람. 진폭은 풍속 비례.
-function computeWaves() {
-    var K_SWELL = 0.128, K_MID = 0.31, K_RIPPLE = 0.75;
-    var windFlow = wind.angleRad + Math.PI;  // 바람이 "부는" 방향
-    var curFlow  = current.angleRad;         // 해류 flow direction
-    wave.swell.dx  =  Math.sin(curFlow)  * K_SWELL;
-    wave.swell.dy  = -Math.cos(curFlow)  * K_SWELL;
-    wave.mid.dx    =  Math.sin(windFlow) * K_MID;
-    wave.mid.dy    = -Math.cos(windFlow) * K_MID;
-    wave.ripple.dx =  Math.sin(windFlow) * K_RIPPLE;
-    wave.ripple.dy = -Math.cos(windFlow) * K_RIPPLE;
-    var ampF = wind.speedMS / 8;
-    if (ampF < 0.2) ampF = 0.2; else if (ampF > 2.0) ampF = 2.0;
-    wave.swell.amp  = 2.5 * Math.max(0.5, ampF);
-    wave.mid.amp    = 1.2 * ampF;
-    wave.ripple.amp = 0.4 * ampF;
-}
 window.__wave = wave;
 
 // --- 별 데이터 (J2000 RA시 / Dec도 / 겉보기등급) ---
@@ -639,43 +544,6 @@ window.__planets = PLANETS;
 window.__planetState = planetState;
 window.__moonState = moonState;
 
-// --- Weather (구름·시정) ---
-// cloudiness 0..1, visibilityCoef 0.5..1.0 (시정 거리 배율)
-function computeWeather() {
-    var lat = sun.lat;
-    var a = Math.abs(lat);
-    var base = 0.2;
-    // ITCZ (적도 수렴대, 계절 shift)
-    var shift = 5 * Math.sin(2 * Math.PI * (sun.dayOfYear - 81) / 365);
-    if (Math.abs(lat - shift) < 10) base += 0.5;
-    // 중위도 폭풍대
-    if (a > 40 && a < 60) base += 0.3;
-    // 아열대 고기압대 (맑음)
-    if (a > 22 && a < 35) base -= 0.15;
-    // 결정적 noise (위치·날짜·년도)
-    var seed = (Math.floor(lat * 3) + Math.floor(sun.lon * 3) * 13 + Math.floor(sun.dayOfYear / 3) * 7 + sun.year * 29) >>> 0;
-    var n = ((seed * 2654435761) >>> 0) / 4294967295;
-    base += (n - 0.5) * 0.4;
-    // 일변화 (낮 대류 증가)
-    base += Math.sin((sun.hourLocal - 6) * Math.PI / 12) * 0.08;
-    if (base < 0) base = 0; else if (base > 1) base = 1;
-    weather.cloudiness = base;
-    weather.visibilityCoef = 1.0 - base * 0.5;
-    // 강수: cloudiness > 0.6 구간에서 선형 증가, 1.0까지. 위도 높으면 눈.
-    weather.precipitation = base > 0.6 ? (base - 0.6) / 0.35 : 0;
-    if (weather.precipitation > 1) weather.precipitation = 1;
-    weather.precipType = (a > 45 || (a > 35 && sun.dayOfYear < 80) || (a > 35 && sun.dayOfYear > 300)) ? 'snow' : 'rain';
-    if (typeof window.__cloudOverride === 'number') {
-        weather.cloudiness = window.__cloudOverride;
-        weather.visibilityCoef = 1.0 - weather.cloudiness * 0.5;
-    }
-    if (typeof window.__precipOverride === 'number') {
-        weather.precipitation = window.__precipOverride;
-    }
-    if (typeof window.__precipTypeOverride === 'string') {
-        weather.precipType = window.__precipTypeOverride;
-    }
-}
 window.__weather = weather;
 function updateStars() {
     // J2000 = 2000-01-01 12:00 UTC = Unix ms 946728000000. T in days from J2000.
@@ -780,46 +648,6 @@ function computeSun() {
 }
 computeSun();
 
-// --- 지역·계절·시간별 바람 (대기 대순환 근사) ---
-function computeWind() {
-    var lat = sun.lat, lon = sun.lon;
-    var day = sun.dayOfYear, hr = sun.hourLocal;
-
-    // 계절별 위도대 shift (여름 +5°, 겨울 -5°)
-    var shift = 5 * Math.sin(2 * Math.PI * (day - 81) / 365);
-    var eff = lat - shift;
-    var a = Math.abs(eff);
-
-    var dir, spd;
-    if (a < 5)        { dir = eff > 0 ? 45 : 135;   spd = 2;  }   // ITCZ
-    else if (a < 30)  { dir = eff > 0 ? 45 : 135;   spd = 8;  }   // 무역풍
-    else if (a < 35)  { dir = eff > 0 ? 135 : 45;   spd = 3;  }   // 말 위도
-    else if (a < 60)  { dir = eff > 0 ? 225 : 315;  spd = 12; }   // 편서풍
-    else              { dir = eff > 0 ? 45 : 135;   spd = 5;  }   // 극동풍
-
-    // 아시아 몬순 (Indian Ocean / SE Asia)
-    if (lon > 60 && lon < 150 && lat > -20 && lat < 30) {
-        if (day > 120 && day < 270)     { dir = 225; spd = 10; } // SW 몬순
-        else if (day > 300 || day < 60) { dir = 45;  spd = 8;  } // NE 몬순
-    }
-
-    // 해륙풍 근사 (낮/밤 약한 sin 변조)
-    var night = Math.sin(2 * Math.PI * hr / 24);
-    dir += night * 8;
-    spd *= 1 + night * 0.1;
-
-    // 결정적 noise (위치 0.2° + 주 단위 + 년도)
-    var seed = (Math.floor(lat * 5) + Math.floor(lon * 5) * 7 + Math.floor(day / 7) * 13 + sun.year * 31) >>> 0;
-    var n = ((seed * 2654435761) >>> 0) / 4294967295;
-    dir += (n - 0.5) * 30;
-    spd *= 0.7 + n * 0.6;
-
-    dir = ((dir % 360) + 360) % 360;
-    if (spd < 0) spd = 0;
-
-    wind.angleRad = dir * Math.PI / 180;
-    wind.speedMS = spd;
-}
 computeWind();
 
 // --- Key handlers ---
