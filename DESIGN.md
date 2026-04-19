@@ -22,13 +22,38 @@
 - Bilinear 보간 + 곡률 보정만 추가하면 1992년 Comanche 화질을 넘어선다
 - 트레이드오프: GPU 가속 없으니 20fps cap. 픽셀 단위 raymarch라 Worker 분산 이점도 적다.
 
-## 왜 단일 HTML 파일인가
+## 왜 단일 HTML 파일에서 Vite+TS 로 갔는가
 
-1. **빌드 시스템 0** — npm·webpack·vite 없음. `python3 -m http.server` 한 줄로 실행.
+프로젝트 초기에는 단일 HTML 이었다. 장점:
+
+1. **빌드 시스템 0** — `python3 -m http.server` 한 줄로 실행.
 2. **이식성** — Google Drive·USB·SD카드에 올려도 동작.
-3. **Claude/LLM 친화** — 한 파일에 모든 컨텍스트가 있어 부분 수정이 쉽다.
+3. **LLM 친화** — 한 파일에 모든 컨텍스트가 있어 부분 수정이 쉽다.
 
-부작용으로 1870줄 단일 파일이 됐지만, 지금까지는 함수 단위 분리로 가독성이 유지된다. 4000줄을 넘기면 모듈 분할 검토.
+몰입도 로드맵(태양/바람/해류/별자리/구름/비·눈/뇌전/오디오)까지 끝난 시점에 2456줄에 도달했고, 단점이 뚜렷해졌다:
+
+- 섹션별 독립 수정이 어렵다 (12개 이상 mutable 싱글톤이 IIFE 한 스코프에 엉킴)
+- 네비게이션이 CLAUDE.md 줄번호 표에 의존 → 약간의 수정만 가해도 stale
+- 테스트·기능 플래그 등 **확장 전에 경계를 그어두는 편이 싸다**
+
+Vite + TypeScript 로 이관 (커밋 `[JONES-89]` 시리즈, 13단계). **런타임 동작·프레임 예산·디버그 인터페이스 동일 유지**. 선택 근거:
+
+- Vite 는 dev HMR + 단일 번들(`inlineDynamicImports: true`) production 둘 다 지원. dist/ 는 `index.html` + `index-[hash].js` 두 파일 → "단일 HTML 정신" 충분히 가까움.
+- TS 는 *loose 모드* 로 출발 (`strict: false`, `allowJs: true`). 구조 분리가 목적이지 타입 안전이 아님. 파일별 strict 승격은 별도 과제.
+- Python 타일 파이프라인 미변경.
+
+### 모듈 경계 — 왜 이렇게 갈랐는가
+
+분할 기준 두 가지:
+
+1. **코드가 매 프레임 접근하는 상태를 이웃에 둔다** — hot loop (`render/voxel.ts` `Render()`) 는 진입 시 state 프로퍼티를 local 변수로 캐싱한다. 이 패턴이 유지되려면 state.ts 가 zero-import 이어야 한다 (순환 방지).
+2. **물리 vs 천문 vs 렌더** — 시뮬레이션 모델(위도·대기·궤도)은 렌더 디테일과 코드베이스 상 독립적이다. `physics/` / `astronomy/` 폴더 분리로 "몰입도 모델을 교체하고 싶을 때 렌더는 건드릴 필요 없다" 는 계약 명시.
+
+**Mutable 싱글톤 유지**: 객체 참조 기반 ESM export (`export const boat = {...}`) 는 live binding 이므로 어느 모듈에서 mutate 해도 전 import 에 즉시 반영. 기존 `var boat = {...}` 의미론과 동일. 상태관리 라이브러리는 도입하지 않음 — 게임 루프 기준 매 프레임 수 십 개 필드를 동시에 갱신하는 구조에는 event sourcing/reducer 가 오히려 overhead.
+
+**재할당되는 스칼라**: `gameTime`, `TIME_SPEED` 등은 `export let` 으로 내보내면 import 측에서 reassign 불가. → `timeRef = { gameTime, TIME_SPEED }`, `inputState = { rotStep, moveStep }`, `mmState = { stride }` 같은 wrapper 객체로 통일. callsite 는 `timeRef.gameTime += ...` 기계적 치환.
+
+**Hot loop 분리 안 함**: `render/voxel.ts` Render() 는 inline 가능한 가장 작은 덩어리로 유지. 모듈 간 함수 호출 indirection 이 프레임 budget 에 누적되지 않도록 DrawVerticalLine 도 동일 파일에 둠.
 
 ## 시간 가속의 트레이드오프
 

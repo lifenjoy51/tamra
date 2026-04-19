@@ -4,17 +4,25 @@
 
 > "지도 위의 점"이 아닌 "배 위의 사람" — 미니맵·좌표·고정 방위 없이 태양·별·바람·해류로만 방향을 판단한다.
 
-단일 HTML 파일(Canvas 2D, Voxel Space 렌더러) + Python 빌드 스크립트로 구성.
+Vite + TypeScript (Canvas 2D, Voxel Space 렌더러) + Python 빌드 스크립트로 구성.
 
 ## 실행
 
 ```bash
 cd ~/works/tamra
-python3 -m http.server 8089
+npm install        # 최초 1회
+npm run dev        # 개발 서버 (포트 8089, HMR)
 # 브라우저에서 http://localhost:8089
 ```
 
-타일 데이터(`tiles/`)는 심볼릭 링크로 공용 디렉토리를 참조한다.
+프로덕션 빌드:
+
+```bash
+npm run build      # dist/index.html + dist/assets/index-[hash].js
+npx vite preview   # 번들 미리보기 (포트 8089)
+```
+
+타일 데이터(`tiles/`)는 심볼릭 링크로 공용 디렉토리를 참조 — `vite.config.ts` middleware 가 레포 루트에서 직접 서빙한다 (asset graph 밖). `dist/` 에는 tiles 포함되지 않으므로 배포 시 dist/ 옆에 별도 배치.
 
 ## 조작법
 
@@ -62,16 +70,29 @@ python3 -m http.server 8089
 
 ```
 tamra/
-├── index.html                ← 시뮬레이터 (단일 파일, ~1870줄)
-├── README.md                 ← 이 문서
-├── DESIGN.md                 ← 설계 배경
-├── CLAUDE.md                 ← 작업용 인덱스
+├── index.html                ← 얇은 셸 (<script type="module" src="/src/main.ts">)
+├── src/                      ← TypeScript 모듈 (Vite 빌드)
+│   ├── main.ts               ← 엔트리 (초기화 + Draw RAF 루프)
+│   ├── config.ts             ← 상수 (SCR_W, TILE_SIZE, SEA 등)
+│   ├── state.ts              ← mutable 싱글톤 (boat, ship, camera, wind, …)
+│   ├── canvas.ts             ← canvas / ctx / buf32 / fitCanvas
+│   ├── tiles.ts              ← 타일 로더 + altitude/colormap 버퍼
+│   ├── terrain.ts            ← colormap 생성 + piecewise height LUT
+│   ├── physics/              ← wind, sail, current, waves, weather
+│   ├── astronomy/            ← sun, stars, planets, moon
+│   ├── sky.ts                ← sky glow + cloud mask
+│   ├── render/               ← background, voxel(HOT), camera,
+│   │                           effects, minimap, boat-sprite, skymap
+│   ├── input.ts              ← 키보드 + 포인터 핸들러
+│   ├── audio.ts              ← Web Audio 절차생성 사운드
+│   └── debug.ts              ← window.__* DevTools hook 집결
+├── vite.config.ts            ← dev 서버 포트 8089 + tiles/boat.png 미들웨어
+├── package.json / tsconfig.json
+├── README.md / DESIGN.md / CLAUDE.md
 ├── docs/PIPELINE.md          ← 타일 빌드 파이프라인
 ├── generate_maps.py          ← legacy: 제주 1024 윈도우 PNG 생성
 ├── generate_world_tiles.py   ← 전세계 해안선 타일 배치
-├── jeju_hires_1024.{raw,png} ← legacy 산출물
-├── jeju_colormap_1024.png    ← legacy
-└── tiles/                    ← 전세계 타일 (심볼릭 링크)
+└── tiles/                    ← 전세계 타일 (심볼릭 링크, gitignore)
 ```
 
 원본 DEM(`final_heightmap.raw`, 7GB)은 `~/works/heightmap/`에 별도 보관.

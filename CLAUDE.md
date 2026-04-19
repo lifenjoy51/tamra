@@ -8,14 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 제주도를 중심으로 한 9세기 이전 고대 항해 체험 시뮬레이터. **핵심 컨셉**: 플레이어는 "지도 위의 점"이 아니라 "배 위의 사람" (미니맵/좌표/고정 방위 없음, 태양·별·바람·해류로만 방향 판단).
 
-단일 HTML 파일(Canvas 2D) + Python 빌드 스크립트 2개로 구성. 빌드 시스템/테스트 프레임워크 없음.
+Vite + TypeScript(Canvas 2D) 런타임 + Python 타일 빌드. 테스트 프레임워크 없음.
 
 ## 자주 쓰는 명령
 
 ```bash
-# 프로토타입 실행 (.claude/launch.json 기준 포트 8089)
-cd ~/works/tamra && python3 -m http.server 8089
-# → http://localhost:8089
+# 프로토타입 실행 (포트 8089)
+cd ~/works/tamra
+npm install        # 최초 1회
+npm run dev        # HMR dev 서버 → http://localhost:8089
+
+# 프로덕션 빌드
+npm run build      # dist/index.html + dist/assets/index-[hash].js
+npx vite preview   # 번들 미리보기 (포트 8089)
 
 # PNG 재생성 (raw → heightmap + colormap)
 python3 generate_maps.py
@@ -27,13 +32,46 @@ python3 generate_world_tiles.py --tile 143,26   # 단일 타일 디버그
 python3 generate_world_tiles.py --verify        # 제주 타일 비교
 ```
 
-원본 DEM(`final_heightmap.raw`, 7GB)은 `~/works/heightmap/`에 별도 보관.
+원본 DEM(`final_heightmap.raw`, 7GB)은 `~/works/heightmap/`에 별도 보관. `tiles/`와 `boat.png`는 `vite.config.ts` middleware 가 레포 루트에서 직접 서빙하므로 **이동 금지** (Vite asset graph 밖 → hash rename·dist 복사 둘 다 회피).
 
 ## 아키텍처 핵심
 
-### 렌더 파이프라인 (index.html)
+### 모듈 구조 (`src/`)
 
-s-macke/VoxelSpace 기반 + 확장. Draw 루프 순서 (`index.html:1834`):
+| 경로 | 책임 |
+|---|---|
+| `main.ts` | 엔트리, 초기화 orchestration, Draw RAF 루프 |
+| `config.ts` | 상수 (SCR_W, SEA, TILE_SIZE, WORLD_* 등) |
+| `state.ts` | mutable 싱글톤 모음 (boat/ship/camera/wind/sail/current/wave/weather/sun/moonState/timeRef/frameStats/uiFlags) |
+| `canvas.ts` | canvas/ctx/buf32/buf8/imagedata + fitCanvas + PX_SCALE |
+| `tiles.ts` | 타일 로더, altitude/colormap 링버퍼, slotTiles |
+| `terrain.ts` | generateColormap + piecewise heightMeters LUT |
+| `physics/wind.ts` | Hadley/Ferrel/Polar + ITCZ + 몬순 |
+| `physics/sail.ts` | polarFor, computeSail, updateShipSpeed |
+| `physics/current.ts` | 적도류·쿠로시오·동호주 |
+| `physics/waves.ts` | swell + mid + ripple (wind/current 기반) |
+| `physics/weather.ts` | cloudiness/visibility/precipitation (+ `__cloudOverride`) |
+| `astronomy/sun.ts` | dayOfYear + δ/H → alt/az |
+| `astronomy/stars.ts` | STARS, MILKYWAY, updateStars(→ planets/moon 호출) |
+| `astronomy/planets.ts` | PLANETS + Meeus J2000 + Kepler |
+| `astronomy/moon.ts` | Meeus 간이식 → λ/β → alt/az + phase |
+| `sky.ts` | skyRow/skyGlowX/Y/skyGlow + updateSky + cloud mask |
+| `render/voxel.ts` | **HOT PATH** — DrawVerticalLine + Render (bilinear 4-이웃) |
+| `render/background.ts` | DrawBackground (sky/구름/은하수/별/행성/달/태양 halo) |
+| `render/camera.ts` | UpdateCamera + moveBoat (3x3 shore buffer + 서브스텝) |
+| `render/effects.ts` | drawNearFog / drawPrecipitation / drawLightning |
+| `render/minimap.ts` | DrawMinimap + mmState.stride |
+| `render/boat-sprite.ts` | DrawBoat + boatSprite.img |
+| `render/skymap.ts` | DrawSkyMap (K 토글, polar azimuthal) |
+| `input.ts` | initInput + inputState.{rotStep, moveStep} |
+| `audio.ts` | Web Audio 절차생성 (audio 싱글톤, initAudio/resumeAudio/setMuted/updateAudio/flapBurst/uiBlip) |
+| `debug.ts` | initDebugHooks (window.__* 전부 여기에) |
+
+의존성 규칙: `state.ts` 는 zero-import (순수 데이터). 다른 모듈은 state 쪽으로만 흐른다 → 순환 불가. Hot loop (`render/voxel.ts` `Render()`) 은 함수 진입 시 state 프로퍼티를 local 변수로 캐싱 (ESM property access 인라인 유도).
+
+### 렌더 파이프라인
+
+s-macke/VoxelSpace 기반 + 확장. Draw 루프 순서 ([src/main.ts](src/main.ts) 의 `Draw()`):
 
 ```
 UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + 달 + 태양)
@@ -44,7 +82,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 ```
 
 - **Bilinear 4-이웃 샘플링**: `heightMeters` (occlusion 판정용) 선행 → 통과 픽셀만 color bilinear
-- **allSea fast path**: 4 이웃이 모두 SEA 이면 bilinear 스킵, 색·높이 상수 1회 (`Render` L1415 부근)
+- **allSea fast path**: 4 이웃이 모두 SEA 이면 bilinear 스킵, 색·높이 상수 1회 ([src/render/voxel.ts](src/render/voxel.ts) `Render()` 내부)
 - **지구 곡률**: `drop_m(z) = (z·UNIT_M)² / (2R)`, `UNIT_M=400` (한국 위도 기준 ~400m/px)
 - **projScale**: `(SCR_H · 0.0044) / z` — 세로 해상도에 비례해 수직 FOV 일관
 - **deltaz**: 초기 0.5, step당 `+0.005`. 모든 컬럼이 occlusion 닫히면 z 루프 early break (`openCount`)
@@ -61,8 +99,8 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 
 배는 돛으로 추진된다. **W/S로 돛을 내리고/올리면** `boat.sailUp` 토글, 매 프레임 자동 추진. A/D는 키 1회=1 step 회전.
 
-- **돛 polar curve** (`polarFor` L460): IRONS(0.05) / CLOSE(0.55) / BEAM(1.00) / BROAD(1.20) / RUN(0.90)
-- **추진 속도** (`computeSail` L470 + `updateShipSpeed` L485): `BASE_SAIL_SPEED(4 m/s) × polar × windFactor(wind/8, clamp 0.3~1.8)`
+- **돛 polar curve** ([src/physics/sail.ts](src/physics/sail.ts) `polarFor`): IRONS(0.05) / CLOSE(0.55) / BEAM(1.00) / BROAD(1.20) / RUN(0.90)
+- **추진 속도** (`computeSail` + `updateShipSpeed`): `BASE_SAIL_SPEED(4 m/s) × polar × windFactor(wind/8, clamp 0.3~1.8)`
 - **해류 drift**: 돛 추진 벡터 + 해류 벡터 = `ship.groundMS` / `ship.groundDirRad`
 - **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용
 - **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*4)` — 큰 step에서도 중간 셀 체크 누락 방지
@@ -73,10 +111,10 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 
 | 시스템 | 함수 | 모델 |
 |---|---|---|
-| **시간/태양** | `computeSun` L927 | 위/경도 + dayOfYear → δ/H → alt/az. 게임 정오부터 시작 |
-| **바람** | `computeWind` L971 | Hadley/Ferrel/Polar + ITCZ + 아시아 몬순 + 결정적 noise |
-| **해류** | `computeCurrent` L506 | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
-| **파도** | `computeWaves` L539 | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
+| **시간/태양** | `astronomy/sun.ts` computeSun | 위/경도 + dayOfYear → δ/H → alt/az. 게임 정오부터 시작 |
+| **바람** | `physics/wind.ts` computeWind | Hadley/Ferrel/Polar + ITCZ + 아시아 몬순 + 결정적 noise |
+| **해류** | `physics/current.ts` computeCurrent | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
+| **파도** | `physics/waves.ts` computeWaves | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
 | **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 + GMST → LST → hour angle + 대기 굴절 twinkle |
 | **은하수** | `MILKYWAY`, `milkyState` | galactic plane b=0 → J2000 NGP 변환 (l=5° 간격 72점) + 밀도 가중 |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
@@ -108,7 +146,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 
 ### 하늘보기 (K키)
 
-`DrawSkyMap` (L1639 부근). polar azimuthal 정사영, **배 진행 방향이 화면 위쪽**. 시간 정지. 태양·달·행성·별 모두 표시 (낮/밤 가시성 자동 — `sun.altDeg < 0`이어야 별/행성/달 보임).
+[src/render/skymap.ts](src/render/skymap.ts) `DrawSkyMap`. polar azimuthal 정사영, **배 진행 방향이 화면 위쪽**. 시간 정지. 태양·달·행성·별 모두 표시 (낮/밤 가시성 자동 — `sun.altDeg < 0`이어야 별/행성/달 보임).
 
 ### 데이터 파이프라인
 
@@ -125,7 +163,9 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 - 5x5 로드 범위(1280) > 렌더 거리(800) → 뒤쪽 오래된 타일 안 보임
 - `ensureTilesLoaded()`가 배 주변 5x5 async 로드. 순수 바다 타일은 파일 없이 flat fill
 
-### 핵심 상수 위치 (index.html)
+### 핵심 상수 위치
+
+[src/config.ts](src/config.ts) 에 상수, [src/state.ts](src/state.ts) 에 초기값 (`timeRef.TIME_SPEED`, `camera.distance` 등).
 
 | 상수 | 값 | 의미 |
 |---|---|---|
@@ -136,9 +176,9 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 | `camera.distance` | 800 | 최대 렌더 거리 |
 | `FRAME_INTERVAL` | 50 | 20fps cap |
 | `BASE_SAIL_SPEED` | 4 m/s | 돛 100% + windFactor 1 기준 |
-| `TIME_SPEED` | 120 (초기) | 시간 가속 (T/Y로 1~7200) |
+| `timeRef.TIME_SPEED` | 120 (초기) | 시간 가속 (T/Y로 1~7200) |
 
-### Render() 최적화 메모 (`index.html:1318`)
+### Render() 최적화 메모 ([src/render/voxel.ts](src/render/voxel.ts))
 
 이미 적용된 것 (3.72ms → 2.33ms, 37% 절감):
 
