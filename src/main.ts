@@ -5,39 +5,11 @@ import {
     ORIGIN_LON, ORIGIN_LAT, DEG_PER_PIXEL,
     TIME_SPEED_MIN, TIME_SPEED_MAX,
 } from './config';
+import { canvas, ctx, imagedata, buf8, buf32 } from './canvas';
 
 (async function () {
-// 뷰포트에 정수배로 맞추는 PX_SCALE (crisp pixel 유지, fitCanvas에서 재할당)
-var PX_SCALE = Math.max(1, Math.min(
-    Math.floor(window.innerWidth  / SCR_W),
-    Math.floor(window.innerHeight / SCR_H)
-));
-
 // 시간 가속: 1초 실시간 = 120초 게임시간 ⇒ 하루 = 12분. T/Y 키로 조절
 var TIME_SPEED = 120;
-
-// --- Canvas ---
-var canvas = document.getElementById('c');
-var ctx = canvas.getContext('2d');
-canvas.width = SCR_W;
-canvas.height = SCR_H;
-function fitCanvas() {
-    var s = Math.max(1, Math.min(
-        Math.floor(window.innerWidth  / SCR_W),
-        Math.floor(window.innerHeight / SCR_H)
-    ));
-    PX_SCALE = s;
-    canvas.style.width  = SCR_W * s + 'px';
-    canvas.style.height = SCR_H * s + 'px';
-}
-fitCanvas();
-window.addEventListener('resize', fitCanvas);
-
-// --- Double buffer (same pattern as s-macke/VoxelSpace) ---
-var imagedata = ctx.createImageData(SCR_W, SCR_H);
-var bufarray  = new ArrayBuffer(SCR_W * SCR_H * 4);
-var buf8      = new Uint8Array(bufarray);
-var buf32     = new Uint32Array(bufarray);
 
 // Fog target: 바다 → 하늘색, 육지 → 어두운 회색 (실제 대기 원근감)
 var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
