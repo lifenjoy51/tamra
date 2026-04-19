@@ -6,10 +6,16 @@ import {
     TIME_SPEED_MIN, TIME_SPEED_MAX,
 } from './config';
 import { canvas, ctx, imagedata, buf8, buf32 } from './canvas';
+import {
+    boat, ship, camera, input,
+    wind, sail, current, wave, weather,
+    sun, moonState,
+    timeRef, frameStats,
+    BASE_SAIL_SPEED, BASE_CAM_METERS, CAM_HEIGHT_MARGIN,
+    FRAME_INTERVAL, FRAME_EPSILON,
+} from './state';
 
 (async function () {
-// 시간 가속: 1초 실시간 = 120초 게임시간 ⇒ 하루 = 12분. T/Y 키로 조절
-var TIME_SPEED = 120;
 
 // Fog target: 바다 → 하늘색, 육지 → 어두운 회색 (실제 대기 원근감)
 var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
@@ -136,7 +142,7 @@ function cloudNoise2D(x, y) {
 }
 function updateCloudMask() {
     // 갱신 주기: 30초 게임내시간. 과도한 flicker 방지.
-    var key = (gameTime / 30000) | 0;
+    var key = (timeRef.gameTime / 30000) | 0;
     if (key === cloudLastKey) return;
     cloudLastKey = key;
     var cloudi = weather.cloudiness;
@@ -433,22 +439,6 @@ gameUiEl.style.display = 'block';
 var debugEl = document.getElementById('debug');
 debugEl.style.display = 'block';
 
-// --- Wave (파도) ---
-var wave = {
-    time: 0,
-    // 큰 너울
-    swell:  { dx: 0.10, dy: 0.08, speed: 1.0, amp: 2.5 },
-    // 중간 파도
-    mid:    { dx: 0.25, dy:-0.18, speed: 1.5, amp: 1.2 },
-    // 잔물결
-    ripple: { dx: 0.60, dy: 0.45, speed: 2.3, amp: 0.4 }
-};
-
-// --- Wind (풍향) ---
-// 노이즈 블록 회전 축 → 동서남북으로 네모가 정렬되지 않게 함
-// 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
-// 풍향(angleRad) · 풍속(speedMS) — computeWind()가 매 프레임 갱신
-var wind = { angleRad: Math.PI / 4, speedMS: 8 };
 window.__wind = wind;
 
 // --- Sail (돛 효율) ---
@@ -459,7 +449,6 @@ window.__wind = wind;
 //   BROAD  120..160° 1.20 (브로드리치, 최고속)
 //   RUN    160..180° 0.90 (런닝, 세일 그림자 효과)
 // wind.speedMS / 8 (기준) 기준 0.3..1.8 clamp
-var sail = { polar: 1.0, mode: 'BEAM', windFactor: 1.0 };
 function polarFor(headingRad) {
     var rel = headingRad - wind.angleRad;
     rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
@@ -505,7 +494,6 @@ window.__sail = sail;
 // --- Current (해류) ---
 // 대양 대순환 근사 — flow direction (해류가 "흐르는" 방향, 바람과 반대 관습)
 // 0 = 북쪽으로 흐름, π/2 = 동쪽으로 흐름
-var current = { angleRad: 0, speedMS: 0 };
 function computeCurrent() {
     var lat = sun.lat, lon = sun.lon;
     var a = Math.abs(lat);
@@ -819,7 +807,6 @@ function updatePlanets(Tdays, gmstH, latRad, lonDeg) {
 }
 
 // --- 달 위치 · 위상 (Meeus 간이식) ---
-var moonState = { altRad: 0, azRad: 0, phase: 0, illumination: 0 };
 function updateMoon(Tdays, gmstH, latRad, lonDeg) {
     var DEG = Math.PI / 180;
     var T = Tdays / 36525;
@@ -874,7 +861,6 @@ window.__moonState = moonState;
 
 // --- Weather (구름·시정) ---
 // cloudiness 0..1, visibilityCoef 0.5..1.0 (시정 거리 배율)
-var weather = { cloudiness: 0.3, visibilityCoef: 1.0, precipitation: 0, precipType: 'rain' };
 function computeWeather() {
     var lat = sun.lat;
     var a = Math.abs(lat);
@@ -913,7 +899,7 @@ function computeWeather() {
 window.__weather = weather;
 function updateStars() {
     // J2000 = 2000-01-01 12:00 UTC = Unix ms 946728000000. T in days from J2000.
-    var Tdays = (gameTime / 86400000) - 10957.5;
+    var Tdays = (timeRef.gameTime / 86400000) - 10957.5;
     // GMST (hours)
     var gmst = 18.697374558 + 24.06570982441908 * Tdays;
     // LST (hours) — 경도 보정
@@ -955,53 +941,21 @@ function updateStars() {
 // debug: camera 전역 접근
 
 // --- Boat (플레이어 조종 대상) ---
-// gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H)
-// sailUp: 돛 펼침 상태 (바람 + 돛 폴라에 따라 자동 전진)
-var boat = { gx: window.__startGx, gy: window.__startGy, angle: Math.PI, sailUp: true };
+// gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H). tile init 이후 주입
+boat.gx = window.__startGx;
+boat.gy = window.__startGy;
+camera.x = boat.gx;
+camera.y = boat.gy;
 window.__boat = boat; // 디버그: 외부에서 위치 조작
-// 기준 항해 속도: polar=1 · windFactor=1 (풍속 8 m/s 빔리치) 기준 4 m/s
-var BASE_SAIL_SPEED = 4;
-// ship 속도 상태: sail 추진, ground(해류 합성), heading
-var ship = { sailMS: 0, groundMS: 0, groundDirRad: 0 };
 window.__ship = ship;
-
-// --- Camera (3인칭: 배 뒤에서 추적) ---
-var BASE_CAM_METERS = 50;       // 기본 카메라 높이 (meters, ~배 위 시점)
-var CAM_HEIGHT_MARGIN = 20;     // 카메라 아래 지형 있을 때 띄울 여유 (m)
-// camera.x, camera.y는 글로벌 월드 좌표 (렌더 루프에서 & MASK로 버퍼 위치 매핑)
-var camera = {
-    x: boat.gx, y: boat.gy,
-    heightMeters: BASE_CAM_METERS,
-    angle: 0.0,
-    horizon: 180,
-    distance: 800
-};
 window.__camera = camera;
 
-// --- Input ---
-var input = {
-    forwardbackward: 0,
-    leftright: 0
-};
-
-var time = new Date().getTime();
-
-// --- Sun / Game time state ---
-// 시뮬 시각 (ms). 하지(6/21) 로컬 solar 정오 시작
-//   utcH = 12 - lon/15 = 12 - 126.55/15 ≈ 3.56 ⇒ 03:34 UTC
-var gameTime = Date.UTC(new Date().getUTCFullYear(), 5, 21, 3, 34, 0);
 // 디버그: 콘솔에서 시간 제어 (window.__advanceHours(10), window.__setTimeSpeed(1))
-window.__advanceHours = function (h) { gameTime += 3600000 * h; };
-window.__setTimeSpeed = function (s) { TIME_SPEED = s; };
-var sun = {
-    lat: 0, lon: 0,
-    altDeg: 45, azDeg: 180,
-    altRad: 0, azRad: 0,
-    dayOfYear: 0, hourLocal: 12, month: 1, date: 1, year: 2000
-};
+window.__advanceHours = function (h) { timeRef.gameTime += 3600000 * h; };
+window.__setTimeSpeed = function (s) { timeRef.TIME_SPEED = s; };
 window.__sun = sun;
-window.__setGameTime = function (ms) { gameTime = ms; };
-window.__getGameTime = function () { return gameTime; };
+window.__setGameTime = function (ms) { timeRef.gameTime = ms; };
+window.__getGameTime = function () { return timeRef.gameTime; };
 
 function computeSun() {
     // 보트 위치 → 위/경도
@@ -1011,9 +965,9 @@ function computeSun() {
     sun.lat = lat;
     sun.lon = lon;
 
-    var d = new Date(gameTime);
+    var d = new Date(timeRef.gameTime);
     var yearStart = Date.UTC(d.getUTCFullYear(), 0, 0);
-    var dayOfYear = Math.floor((gameTime - yearStart) / 86400000);
+    var dayOfYear = Math.floor((timeRef.gameTime - yearStart) / 86400000);
 
     // 태양 적위 (declination) — 근사식
     var dec = 23.44 * Math.PI/180 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
@@ -1273,11 +1227,11 @@ document.onkeydown = function(e) {
             ROT_STEP = Math.min(ROT_STEP_MAX, ROT_STEP * 2);
             break;
         case 84: // 'T' : 시간 감속 ÷2
-            TIME_SPEED = Math.max(TIME_SPEED_MIN, TIME_SPEED / 2);
+            timeRef.TIME_SPEED = Math.max(TIME_SPEED_MIN, timeRef.TIME_SPEED / 2);
             uiBlip(440);
             break;
         case 89: // 'Y' : 시간 가속 ×2
-            TIME_SPEED = Math.min(TIME_SPEED_MAX, TIME_SPEED * 2);
+            timeRef.TIME_SPEED = Math.min(TIME_SPEED_MAX, timeRef.TIME_SPEED * 2);
             uiBlip(660);
             break;
         case 75: // 'K' : 별자리 전체 뷰 토글
@@ -1847,10 +1801,10 @@ function Render() {
 // --- UpdateCamera (배 조종 → 카메라 추적) ---
 function UpdateCamera() {
     var nowMs = new Date().getTime();
-    var dtMs = nowMs - time;
+    var dtMs = nowMs - frameStats.lastMoveTime;
 
     // 게임 시간 누적 (TIME_SPEED 배속). 하늘보기 중엔 정지.
-    if (!skyMapOn) gameTime += dtMs * TIME_SPEED;
+    if (!skyMapOn) timeRef.gameTime += dtMs * timeRef.TIME_SPEED;
 
     // 이동은 이산 입력 이벤트에서 moveBoat()로 처리 (연속 이동 없음)
     // 시선 고정 — 화면 상단(row 0) = alt 90° (천정), horizon = SCR_H/2 = 180
@@ -1873,7 +1827,7 @@ function UpdateCamera() {
 
     // 배 이동: 돛 추진 + 해류 drift를 각각 적용 (moveBoat로 해안 충돌 보존)
     //   UNIT_M = 400 m/unit → units = m/s × gameSeconds / 400
-    var gameDt = skyMapOn ? 0 : (dtMs * TIME_SPEED) / 1000;
+    var gameDt = skyMapOn ? 0 : (dtMs * timeRef.TIME_SPEED) / 1000;
     if (gameDt > 0) {
         if (boat.sailUp && ship.sailMS > 0.01) {
             var sU = ship.sailMS * gameDt / 400;
@@ -1896,7 +1850,7 @@ function UpdateCamera() {
     // 타일 관리: 보트 주변 3x3 로드 보장
     ensureTilesLoaded();
 
-    time = nowMs;
+    frameStats.lastMoveTime = nowMs;
 }
 
 // --- Precipitation (비·눈 파티클) ---
@@ -1983,7 +1937,7 @@ var lightningLastRealMs = -99999;
 function drawLightning() {
     if (weather.cloudiness <= 0.85) return;
     // bucket: 30s 게임시간 단위로 이벤트 발생 여부 결정
-    var bucket = (gameTime / 30000) | 0;
+    var bucket = (timeRef.gameTime / 30000) | 0;
     var h = ((bucket * 2654435761) >>> 0) / 4294967295;  // 0..1
     // cloudiness 0.85~1.0 → 확률 0.05~0.25
     var prob = (weather.cloudiness - 0.85) * 1.3 + 0.05;
@@ -2242,12 +2196,6 @@ function DrawBoat() {
 // --- Main Draw loop (20fps cap) ---
 // rAF 주기(16.67ms)의 정수배 근처에서 지터로 인한 fps 진동을 막기 위해
 // EPSILON(8ms ≈ rAF 주기 절반)만큼 여유를 주고, lastDrawTime을 now로 리셋.
-var FRAME_INTERVAL = 1000 / 20; // 50ms
-var FRAME_EPSILON = 8;           // rAF 지터 허용 (half-period)
-var lastDrawTime = 0;
-var fpsFrames = 0, fpsStart = 0, fpsCurrent = 0;
-// Frame time (EMA): Draw 한 번의 전체 소요 시간 (ms). 20fps cap 대기는 미포함.
-var frameTimeEma = 0;
 
 function UpdateDebug() {
     var tx = Math.floor(boat.gx / TILE_SIZE);
@@ -2273,7 +2221,7 @@ function UpdateDebug() {
         'Tile:    ' + tx + ',' + ty + ' (slot ' + slot + ')\n' +
         'Pos:     ' + (boat.gx | 0) + ',' + (boat.gy | 0) + '\n' +
         'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
-        'Time:    ' + hhmm + '  (x' + TIME_SPEED + ')\n' +
+        'Time:    ' + hhmm + '  (x' + timeRef.TIME_SPEED + ')\n' +
         'Sun:     alt ' + sun.altDeg.toFixed(0) + '°, az ' + sun.azDeg.toFixed(0) + '°\n' +
         'Ang:     ' + (angDeg | 0) + '°\n' +
         'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
@@ -2286,15 +2234,15 @@ function UpdateDebug() {
         'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
         'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
         'MMZoom:  1:' + minimapStride + '\n' +
-        'FPS:     ' + fpsCurrent + '\n' +
-        'Frame:   ' + frameTimeEma.toFixed(2) + 'ms';
+        'FPS:     ' + frameStats.fpsCurrent + '\n' +
+        'Frame:   ' + frameStats.frameTimeEma.toFixed(2) + 'ms';
 }
 
 function Draw(now) {
     window.requestAnimationFrame(Draw);
     if (now === undefined) now = performance.now();
-    if (now - lastDrawTime < FRAME_INTERVAL - FRAME_EPSILON) return;
-    lastDrawTime = now;
+    if (now - frameStats.lastDrawTime < FRAME_INTERVAL - FRAME_EPSILON) return;
+    frameStats.lastDrawTime = now;
 
     var frameStart = performance.now();
     UpdateCamera();
@@ -2310,15 +2258,15 @@ function Draw(now) {
     DrawSkyMap();
     var frameDur = performance.now() - frameStart;
     // EMA alpha=0.1 — 약 10프레임 윈도우
-    frameTimeEma = frameTimeEma === 0 ? frameDur : frameTimeEma * 0.9 + frameDur * 0.1;
+    frameStats.frameTimeEma = frameStats.frameTimeEma === 0 ? frameDur : frameStats.frameTimeEma * 0.9 + frameDur * 0.1;
 
     // FPS 1초 간격 갱신
-    fpsFrames++;
-    if (fpsStart === 0) fpsStart = now;
-    if (now - fpsStart >= 1000) {
-        fpsCurrent = Math.round(fpsFrames * 1000 / (now - fpsStart));
-        fpsFrames = 0;
-        fpsStart = now;
+    frameStats.fpsFrames++;
+    if (frameStats.fpsStart === 0) frameStats.fpsStart = now;
+    if (now - frameStats.fpsStart >= 1000) {
+        frameStats.fpsCurrent = Math.round(frameStats.fpsFrames * 1000 / (now - frameStats.fpsStart));
+        frameStats.fpsFrames = 0;
+        frameStats.fpsStart = now;
     }
     UpdateDebug();
 }
