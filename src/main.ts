@@ -37,14 +37,11 @@ import { drawNearFog, drawPrecipitation, drawLightning } from './render/effects'
 import { DrawMinimap, mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
 import { DrawBoat, initBoatSprite, boatSprite } from './render/boat-sprite';
 import { DrawSkyMap } from './render/skymap';
-import { audio, updateAudio } from './audio';
+import { updateAudio } from './audio';
 import { initInput, inputState } from './input';
+import { initDebugHooks } from './debug';
 
 (async function () {
-
-// Fog target: 바다 → 하늘색, 육지 → 어두운 회색 (실제 대기 원근감)
-var FOG_SEA_R = 160, FOG_SEA_G = 185, FOG_SEA_B = 210;
-var FOG_LAND_R = 90,  FOG_LAND_G = 100, FOG_LAND_B = 120;
 
 // --- 초기 로드: tile_index + 시작 지역 5x5 + boat 스프라이트 ---
 var startGx = 0, startGy = 0;
@@ -53,10 +50,6 @@ try {
     startGx = tilesInit.startGx;
     startGy = tilesInit.startGy;
     await initBoatSprite();
-    window.__startGx = startGx;
-    window.__startGy = startGy;
-    window.__altitude = altitude;
-    window.__colormap = colormap;
 } catch (e) {
     document.getElementById('loading').innerHTML =
         '로드 실패<br><br><small>터미널에서:<br>' +
@@ -73,43 +66,18 @@ gameUiEl.style.display = 'block';
 var debugEl = document.getElementById('debug');
 debugEl.style.display = 'block';
 
-window.__audio = audio;
-window.__wind = wind;
-
-window.__sail = sail;
-window.__current = current;
-window.__wave = wave;
-
-window.__weather = weather;
-window.__stars = STARS;
-window.__starState = starState;
-window.__planets = PLANETS;
-window.__planetState = planetState;
-window.__moonState = moonState;
-// debug: camera 전역 접근
-
 // --- Boat (플레이어 조종 대상) ---
 // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H). tile init 이후 주입
-boat.gx = window.__startGx;
-boat.gy = window.__startGy;
+boat.gx = startGx;
+boat.gy = startGy;
 camera.x = boat.gx;
 camera.y = boat.gy;
-window.__boat = boat; // 디버그: 외부에서 위치 조작
-window.__ship = ship;
-window.__camera = camera;
-
-// 디버그: 콘솔에서 시간 제어 (window.__advanceHours(10), window.__setTimeSpeed(1))
-window.__advanceHours = function (h) { timeRef.gameTime += 3600000 * h; };
-window.__setTimeSpeed = function (s) { timeRef.TIME_SPEED = s; };
-window.__sun = sun;
-window.__setGameTime = function (ms) { timeRef.gameTime = ms; };
-window.__getGameTime = function () { return timeRef.gameTime; };
 
 computeSun();
-
 computeWind();
 
 initInput();
+initDebugHooks();
 
 // --- Main Draw loop (20fps cap) ---
 // rAF 주기(16.67ms)의 정수배 근처에서 지터로 인한 fps 진동을 막기 위해
