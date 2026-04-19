@@ -37,6 +37,8 @@ import { drawNearFog, drawPrecipitation, drawLightning } from './render/effects'
 import { DrawMinimap, mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
 import { DrawBoat, initBoatSprite, boatSprite } from './render/boat-sprite';
 import { DrawSkyMap } from './render/skymap';
+import { audio, updateAudio } from './audio';
+import { initInput, inputState } from './input';
 
 (async function () {
 
@@ -71,6 +73,7 @@ gameUiEl.style.display = 'block';
 var debugEl = document.getElementById('debug');
 debugEl.style.display = 'block';
 
+window.__audio = audio;
 window.__wind = wind;
 
 window.__sail = sail;
@@ -106,185 +109,7 @@ computeSun();
 
 computeWind();
 
-// --- Key handlers ---
-// 회전(A/D) / 이동(W/S) 둘 다 키 누를 때마다 이산 1 단위 변화.
-// hold 시 브라우저 auto-repeat로 연속 효과.
-// 미니맵: -/= 로 축소/확대
-var ROT_STEP = Math.PI / 180;  // 초기 1°, [ / ] 로 절반/두배
-var MOVE_STEP = 1;             // 초기 1 world unit, , / . 로 절반/두배
-var ROT_STEP_MIN = Math.PI / 1440, ROT_STEP_MAX = Math.PI / 4;   // 0.125° ~ 45°
-var MOVE_STEP_MIN = 0.0625, MOVE_STEP_MAX = 64;                   // 1/16 ~ 64 unit
-
-// --- Audio (Web Audio) ---
-// 절차 생성 — 외부 asset 없음(단일 HTML 유지).
-// 첫 키 입력 시 ctx.resume(). updateAudio()는 메인 루프 말미 훅.
-var audio = {
-    ctx: null, master: null, muted: false,
-    waves: null, wavesGain: null, wavesFilter: null,
-    wind: null, windGain: null, windFilter: null,
-    noiseBuffer: null
-};
-try { audio.muted = localStorage.getItem('tamra_muted') === '1'; } catch (e) {}
-window.__audio = audio;
-function buildNoiseBuffer(ctx) {
-    // ~4s white noise loop (pink-ish by lowpass on filter)
-    var len = ctx.sampleRate * 4;
-    var buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    var d = buf.getChannelData(0);
-    // pink noise via Voss-McCartney (간이)
-    var b0=0,b1=0,b2=0;
-    for (var i = 0; i < len; i++) {
-        var w = Math.random() * 2 - 1;
-        b0 = 0.997 * b0 + w * 0.029591;
-        b1 = 0.985 * b1 + w * 0.032534;
-        b2 = 0.950 * b2 + w * 0.048056;
-        d[i] = (b0 + b1 + b2) * 0.3;
-    }
-    return buf;
-}
-function initAudio() {
-    if (audio.ctx) return;
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    var ctx = new AC();
-    var master = ctx.createGain();
-    master.gain.value = audio.muted ? 0 : 0.3;
-    master.connect(ctx.destination);
-    audio.noiseBuffer = buildNoiseBuffer(ctx);
-    // Waves loop
-    var waves = ctx.createBufferSource();
-    waves.buffer = audio.noiseBuffer; waves.loop = true;
-    var wf = ctx.createBiquadFilter();
-    wf.type = 'lowpass'; wf.frequency.value = 300; wf.Q.value = 0.7;
-    var wg = ctx.createGain(); wg.gain.value = 0.0;
-    waves.connect(wf); wf.connect(wg); wg.connect(master); waves.start();
-    // Wind loop
-    var wind = ctx.createBufferSource();
-    wind.buffer = audio.noiseBuffer; wind.loop = true;
-    var wdf = ctx.createBiquadFilter();
-    wdf.type = 'bandpass'; wdf.frequency.value = 600; wdf.Q.value = 3;
-    var wdg = ctx.createGain(); wdg.gain.value = 0.0;
-    wind.connect(wdf); wdf.connect(wdg); wdg.connect(master); wind.start();
-    audio.ctx = ctx; audio.master = master;
-    audio.waves = waves; audio.wavesFilter = wf; audio.wavesGain = wg;
-    audio.wind = wind; audio.windFilter = wdf; audio.windGain = wdg;
-}
-function resumeAudio() {
-    if (!audio.ctx) { initAudio(); return; }
-    if (audio.ctx.state === 'suspended') audio.ctx.resume();
-}
-function setMuted(m) {
-    audio.muted = m;
-    try { localStorage.setItem('tamra_muted', m ? '1' : '0'); } catch (e) {}
-    if (audio.master) audio.master.gain.setTargetAtTime(m ? 0 : 0.3, audio.ctx.currentTime, 0.05);
-}
-var lastFlapMs = -99999;
-function updateAudio() {
-    if (!audio.ctx) return;
-    var t = audio.ctx.currentTime;
-    // 파도: wind 기반(풍파) + 기본값. gain 0~0.35
-    var wg = Math.min(0.35, (wind.speedMS / 25) + 0.05);
-    audio.wavesGain.gain.setTargetAtTime(wg, t, 0.3);
-    audio.wavesFilter.frequency.setTargetAtTime(250 + wind.speedMS * 15, t, 0.3);
-    // 바람 whistle: 풍속↑ → gain↑, 주파수↑
-    var wdg = Math.min(0.18, Math.max(0, (wind.speedMS - 4) / 40));
-    audio.windGain.gain.setTargetAtTime(wdg, t, 0.3);
-    audio.windFilter.frequency.setTargetAtTime(400 + wind.speedMS * 30, t, 0.3);
-    // 돛 펄럭임: 돛 올리고 + AoA가 RUN(180° 근처)일 때 burst
-    var sailActive = boat.sailUp && sail && sail.mode === 'RUN';
-    var nowMs = performance.now();
-    if (sailActive && nowMs - lastFlapMs > 1200 + Math.random() * 1800) {
-        lastFlapMs = nowMs;
-        flapBurst();
-    }
-}
-function flapBurst() {
-    if (!audio.ctx) return;
-    var ctx = audio.ctx;
-    var src = ctx.createBufferSource();
-    src.buffer = audio.noiseBuffer; src.loop = false;
-    src.playbackRate.value = 0.7;
-    var f = ctx.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 800; f.Q.value = 1.5;
-    var g = ctx.createGain();
-    var t = ctx.currentTime;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.15, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    src.connect(f); f.connect(g); g.connect(audio.master);
-    src.start(t, Math.random() * 2);
-    src.stop(t + 0.3);
-}
-function uiBlip(freq) {
-    if (!audio.ctx) return;
-    var ctx = audio.ctx;
-    var osc = ctx.createOscillator();
-    osc.type = 'sine'; osc.frequency.value = freq;
-    var g = ctx.createGain();
-    var t = ctx.currentTime;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.12, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-    osc.connect(g); g.connect(audio.master);
-    osc.start(t); osc.stop(t + 0.1);
-}
-
-document.onkeydown = function(e) {
-    resumeAudio();
-    switch (e.keyCode) {
-        case 87: case 38: // W, Up: 돛 펼침
-            if (!boat.sailUp) uiBlip(520);
-            boat.sailUp = true;
-            break;
-        case 83: case 40: // S, Down: 돛 접음
-            if (boat.sailUp) uiBlip(340);
-            boat.sailUp = false;
-            break;
-        case 65: case 37: boat.angle += ROT_STEP; break; // A, Left
-        case 68: case 39: boat.angle -= ROT_STEP; break; // D, Right
-        case 187: // '=' / '+' : 미니맵 확대
-            mmState.stride = Math.max(MM_STRIDE_MIN, mmState.stride / 1.5);
-            break;
-        case 189: // '-' : 미니맵 축소
-            mmState.stride = Math.min(MM_STRIDE_MAX, mmState.stride * 1.5);
-            break;
-        case 188: // ',' : 이동 속도 ÷2
-            MOVE_STEP = Math.max(MOVE_STEP_MIN, MOVE_STEP / 2);
-            break;
-        case 190: // '.' : 이동 속도 ×2
-            MOVE_STEP = Math.min(MOVE_STEP_MAX, MOVE_STEP * 2);
-            break;
-        case 219: // '[' : 회전 속도 ÷2
-            ROT_STEP = Math.max(ROT_STEP_MIN, ROT_STEP / 2);
-            break;
-        case 221: // ']' : 회전 속도 ×2
-            ROT_STEP = Math.min(ROT_STEP_MAX, ROT_STEP * 2);
-            break;
-        case 84: // 'T' : 시간 감속 ÷2
-            timeRef.TIME_SPEED = Math.max(TIME_SPEED_MIN, timeRef.TIME_SPEED / 2);
-            uiBlip(440);
-            break;
-        case 89: // 'Y' : 시간 가속 ×2
-            timeRef.TIME_SPEED = Math.min(TIME_SPEED_MAX, timeRef.TIME_SPEED * 2);
-            uiBlip(660);
-            break;
-        case 75: // 'K' : 별자리 전체 뷰 토글
-            uiFlags.skyMapOn = !uiFlags.skyMapOn;
-            break;
-        case 77: // 'M' : 음소거 토글
-            setMuted(!audio.muted);
-            break;
-    }
-    e.preventDefault();
-    return false;
-};
-
-document.onkeyup = function(e) {
-    return false;
-};
-// 첫 포인터 제스처에서도 AudioContext resume (iOS Safari 대응)
-document.addEventListener('pointerdown', resumeAudio, { once: false });
-
+initInput();
 
 // --- Main Draw loop (20fps cap) ---
 // rAF 주기(16.67ms)의 정수배 근처에서 지터로 인한 fps 진동을 막기 위해
@@ -324,7 +149,7 @@ function UpdateDebug() {
         'Ship:    ' + ship.groundMS.toFixed(2) + ' m/s (' + (ship.groundMS * 3.6).toFixed(1) + ' km/h)\n' +
         'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
         'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
-        'Step:    ' + MOVE_STEP + 'u / ' + (ROT_STEP * 180 / Math.PI).toFixed(2) + '°\n' +
+        'Step:    ' + inputState.moveStep + 'u / ' + (inputState.rotStep * 180 / Math.PI).toFixed(2) + '°\n' +
         'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
         'MMZoom:  1:' + mmState.stride + '\n' +
         'FPS:     ' + frameStats.fpsCurrent + '\n' +
