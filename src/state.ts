@@ -26,6 +26,10 @@ export const input = {
     leftright: 0,
 };
 
+// --- UI flags ---
+// K 키로 토글. 하늘보기(천구 전체 polar azimuthal 뷰) 활성 중엔 시간 정지 + 배 이동 중지.
+export const uiFlags = { skyMapOn: false };
+
 // --- Wind (풍향) ---
 // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
 // computeWind() 가 매 프레임 갱신
