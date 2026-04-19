@@ -155,6 +155,20 @@ T/Y로 1~7200 조절 가능 — 빠르게 별 회전을 보거나 느리게 정�
 
 → **스크린 공간 파티클**로 결정. 300개 고정 Float32Array 풀, 매 프레임 (풍향 driftX, 중력 fallY) 이동. `buf32` 직접 write(alpha blend 없음). 눈은 점, 비는 3px 사선. 재생성은 화면 밖 → 상단 랜덤.
 
+## Phase 3 — 사운드: 절차 생성만
+
+외부 오디오 asset 없음 — 단일 HTML 제약 유지. PCM 버퍼(pink-ish noise 4s)는 기동 시 1회 생성. 모든 소리는 Web Audio 내부 스레드에서 동작하므로 **메인 루프 frame time 영향 0**.
+
+- **파도**: noise → lowpass(cutoff=250+wind*15Hz) → gain(0.05~0.35, wind.speedMS 기반). 무풍이어도 잔잔한 low hum
+- **바람 whistle**: noise → bandpass(center=400+wind*30Hz, Q=3) → gain(wind>4m/s부터). 고속에선 고주파 whistle 느낌
+- **돛 펄럭임**: boat.sailUp + sail.mode==='RUN' 일 때 1.2~3s 랜덤 간격 burst. RUN(정후풍)만 골라낸 이유는 실제 범선에서 후풍일 때 돛이 가장 많이 펄럭이기 때문
+- **UI blip**: 돛 토글(520/340Hz)·시간 가속(440/660Hz) 시 100ms sine. 외부 SFX 없이 상태 변화를 청각화
+- **음소거(M)**: master gain smoothstep 50ms. localStorage 영속 — 유저가 꺼두면 리로드 후에도 유지
+
+iOS Safari는 `ctx.state === 'suspended'`로 시작 → 첫 키/포인터에서 `resume()`. 이 게이트가 없으면 "소리가 안 나요" 제보의 가장 흔한 원인이 됨.
+
+기본 master gain 0.3 — 시뮬 게임에서 음향은 환경 단서지 주목 대상이 아니다. 너무 크면 피로.
+
 ## Phase 2 — 뇌전 플래시의 결정적 트리거
 
 rng 기반이면 재현성·예측성이 낮다. 대신 `gameTime / 30000` bucket에 대해 hash 값이 `prob = (cloudiness-0.85)*1.3 + 0.05` 미만이면 그 bucket의 처음 진입 시 플래시 발동. `lightningLastRealMs` 쿨다운 1.5초로 한 bucket에 여러 번 발동 방지.

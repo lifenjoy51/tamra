@@ -90,6 +90,16 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 
 **디버그 override** (window에서 직접): `__cloudOverride`(cloudiness), `__precipOverride`(precipitation 0~1), `__precipTypeOverride`('rain'|'snow').
 
+### 오디오 (Web Audio, 절차생성)
+
+- `initAudio()`: AudioContext + pink-ish noise 버퍼(4s) + waves(lowpass)·wind(bandpass) 루프 소스 + master gain
+- 첫 키/포인터 제스처에서 `resumeAudio()` 호출 (iOS Safari suspended 대응)
+- `updateAudio()`: 매 프레임 훅 — wind.speedMS 기반으로 waves gain/cutoff, wind gain/freq smoothing(`setTargetAtTime`)
+- `flapBurst()`: 돛 올림 + sail.mode==='RUN'에서 1.2~3초 랜덤 간격 burst (bandpass noise, 250ms envelope)
+- `uiBlip(freq)`: 돛 토글·시간가속 변경 시 짧은 sine AD envelope(100ms). 돛UP=520Hz·DOWN=340Hz, T=440·Y=660
+- `setMuted()` / M 키: master gain smoothstep 0↔0.3, `localStorage['tamra_muted']` 영속
+- `window.__audio` 디버그 노출 (ctx, master, waves/wind gain 등)
+
 ### 시간 가속
 
 - `gameTime` (ms 단위), `TIME_SPEED` (초기 120배속)
