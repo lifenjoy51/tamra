@@ -10,3 +10,9 @@ __pycache__/
 .playwright-mcp/
 temp/
 tamra-network.txt
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
