@@ -62,11 +62,11 @@ export function DrawSkyMap() {
             var px = cx + Math.sin(dlt) * r;
             var py = cy - Math.cos(dlt) * r;
             var mag = star.mag, size, alpha;
-            if (mag < 0)      { size = 3;   alpha = 1.0;  }
-            else if (mag < 1) { size = 2.5; alpha = 0.95; }
-            else if (mag < 2) { size = 2;   alpha = 0.85; }
-            else if (mag < 3) { size = 1.5; alpha = 0.7;  }
-            else              { size = 1;   alpha = 0.55; }
+            if (mag < 0)      { size = 1.5;  alpha = 1.0;  }
+            else if (mag < 1) { size = 1.25; alpha = 0.95; }
+            else if (mag < 2) { size = 1;    alpha = 0.85; }
+            else if (mag < 3) { size = 0.75; alpha = 0.7;  }
+            else              { size = 0.5;  alpha = 0.55; }
             alpha *= nightFade;
             ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
             ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
