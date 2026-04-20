@@ -1,5 +1,5 @@
-// stars.ts — 항성 테이블 + 은하수 샘플 + alt/az 갱신.
-// STARS: 1등급~3등급 주요 항성 (Hipparcos 기반). MILKYWAY: galactic plane b=0 대원을 5° 간격 → 적도좌표.
+// stars.ts — 항성 테이블 + alt/az 갱신.
+// STARS: 1등급~3등급 주요 항성 (Hipparcos 기반).
 // updateStars: J2000 + GMST → LST → 시간각 → alt/az, 이후 updatePlanets/updateMoon 호출.
 import { sun, timeRef } from '../state';
 import { updatePlanets } from './planets';
@@ -136,33 +136,6 @@ export const STARS = [
     { ra:14.975, dec:-43.13, mag: 2.68, n:'BetaLup'   }
 ];
 
-// 은하수 대역 — galactic latitude b=0 대원을 5° 간격 RA/Dec 투영 (J2000 NGP).
-// 밀도 가중: 은하중심(l=0) 근처 최대, 반중심(l=180) 최소.
-export const MILKYWAY = (function () {
-    var pts = [];
-    var aNGP = 192.859 * Math.PI / 180;
-    var dNGP = 27.128 * Math.PI / 180;
-    var lNGP = 122.932 * Math.PI / 180;
-    var sinDN = Math.sin(dNGP), cosDN = Math.cos(dNGP);
-    for (var l = 0; l < 360; l += 5) {
-        var lRad = l * Math.PI / 180;
-        var b = 0;
-        var sinD = Math.sin(b) * sinDN + Math.cos(b) * cosDN * Math.cos(lNGP - lRad);
-        var dec = Math.asin(sinD);
-        var y = Math.cos(b) * Math.sin(lNGP - lRad);
-        var x = Math.sin(b) * cosDN - Math.cos(b) * sinDN * Math.cos(lNGP - lRad);
-        var ra = aNGP - Math.atan2(y, x);
-        ra = ((ra % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-        var dens;
-        var la = Math.abs(((l + 180) % 360) - 180);
-        dens = 1 - la / 180;
-        dens = 0.25 + dens * dens * 0.75;
-        pts.push({ ra: ra * 12 / Math.PI, dec: dec * 180 / Math.PI, dens: dens });
-    }
-    return pts;
-})();
-
-export const milkyState = MILKYWAY.map(function () { return { altRad: 0, azRad: 0 }; });
 export const starState = STARS.map(function() { return { altRad: 0, azRad: 0 }; });
 
 // 별 twinkle 위상·주파수 (결정적, 한 번만 초기화)
@@ -196,20 +169,6 @@ export function updateStars() {
         if (azRad < 0) azRad += 2 * Math.PI;
         starState[i].altRad = altRad;
         starState[i].azRad = azRad;
-    }
-    for (var mi = 0; mi < MILKYWAY.length; mi++) {
-        var mw = MILKYWAY[mi];
-        var mDecRad = mw.dec * Math.PI / 180;
-        var mH = (lst - mw.ra) * 15 * Math.PI / 180;
-        var mSinDec = Math.sin(mDecRad), mCosDec = Math.cos(mDecRad);
-        var mSinH = Math.sin(mH), mCosH = Math.cos(mH);
-        var mSinAlt = sinLat * mSinDec + cosLat * mCosDec * mCosH;
-        if (mSinAlt > 1) mSinAlt = 1; else if (mSinAlt < -1) mSinAlt = -1;
-        var mAltRad = Math.asin(mSinAlt);
-        var mAzRad = Math.atan2(-mCosDec * mSinH, mSinDec * cosLat - mCosDec * sinLat * mCosH);
-        if (mAzRad < 0) mAzRad += 2 * Math.PI;
-        milkyState[mi].altRad = mAltRad;
-        milkyState[mi].azRad = mAzRad;
     }
     updatePlanets(Tdays, gmst, latRad, sun.lon);
     updateMoon(Tdays, gmst, latRad, sun.lon);

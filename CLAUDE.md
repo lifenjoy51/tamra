@@ -59,12 +59,12 @@ python3 generate_world_tiles.py --verify        # 제주 타일 비교
 | `physics/waves.ts` | swell + mid + ripple (wind/current 기반) |
 | `physics/weather.ts` | cloudiness/visibility/precipitation (+ `__cloudOverride`) |
 | `astronomy/sun.ts` | dayOfYear + δ/H → alt/az |
-| `astronomy/stars.ts` | STARS, MILKYWAY, updateStars(→ planets/moon 호출) |
+| `astronomy/stars.ts` | STARS, updateStars(→ planets/moon 호출) |
 | `astronomy/planets.ts` | PLANETS + Meeus J2000 + Kepler |
 | `astronomy/moon.ts` | Meeus 간이식 → λ/β → alt/az + phase |
 | `sky.ts` | skyRow/skyGlowX/Y/skyGlow + updateSky + cloud mask |
 | `render/voxel.ts` | **HOT PATH** — DrawVerticalLine + Render (bilinear 4-이웃) |
-| `render/background.ts` | DrawBackground (sky/구름/은하수/별/행성/달/태양 halo) |
+| `render/background.ts` | DrawBackground (sky/구름/별/행성/달/태양 halo) |
 | `render/camera.ts` | UpdateCamera + moveBoat (3x3 shore buffer + 서브스텝) |
 | `render/effects.ts` | drawNearFog / drawPrecipitation / drawLightning |
 | `render/minimap.ts` | DrawMinimap + mmState.stride |
@@ -81,7 +81,7 @@ python3 generate_world_tiles.py --verify        # 제주 타일 비교
 s-macke/VoxelSpace 기반 + 확장. Draw 루프 순서 ([src/main.ts](src/main.ts) 의 `Draw()`):
 
 ```
-UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + 달 + 태양)
+UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
   → Render(bilinear VS, 수평선 위/아래 전부 담당)
   → drawNearFog(저시정 veil) → drawPrecipitation(비/눈) → drawLightning(뇌전 flash)
   → DrawMinimap → DrawBoat(buf → canvas flip + sprite)
@@ -123,7 +123,6 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 | **해류** | `physics/current.ts` computeCurrent | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
 | **파도** | `physics/waves.ts` computeWaves | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
 | **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 + GMST → LST → hour angle + 대기 굴절 twinkle |
-| **은하수** | `MILKYWAY`, `milkyState` | galactic plane b=0 → J2000 NGP 변환 (l=5° 간격 72점) + 밀도 가중 |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
 | **달** | `updateMoon`, `moonState` 위상·halo | Meeus 간이식 → λ/β. cloudiness > 0.3 시 halo 가산 |
 | **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef, precipitation(>0.6 임계), precipType(위도 기반 rain/snow) |

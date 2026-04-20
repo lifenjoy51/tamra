@@ -22,7 +22,7 @@ import { computeCurrent } from './physics/current';
 import { computeWaves } from './physics/waves';
 import { computeWeather } from './physics/weather';
 import { computeSun } from './astronomy/sun';
-import { STARS, starState, MILKYWAY, milkyState, starTwinklePhase, starTwinkleFreq, updateStars } from './astronomy/stars';
+import { STARS, starState, starTwinklePhase, starTwinkleFreq, updateStars } from './astronomy/stars';
 import { PLANETS, planetState } from './astronomy/planets';
 import { updateMoon } from './astronomy/moon';
 import {

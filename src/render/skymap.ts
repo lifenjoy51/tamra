@@ -126,9 +126,4 @@ export function DrawSkyMap() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('▲', cx, cy - R - 10);
-    // 범례
-    ctx.textAlign = 'left';
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(200, 220, 255, 0.7)';
-    ctx.fillText('K: 닫기   (중심=천정, 위=배 방향, 시간정지)', 12, SCR_H - 12);
 }

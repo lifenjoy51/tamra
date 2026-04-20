@@ -1,4 +1,4 @@
-// background.ts — 수평선 위 전부: sky glow · 구름 · 은하수 · 별 · 행성 · 달 · 태양 halo.
+// background.ts — 수평선 위 전부: sky glow · 구름 · 별 · 행성 · 달 · 태양 halo.
 // Render() 보다 먼저 호출 → voxel 이 덮어 그림.
 import { SCR_W, SCR_H } from '../config';
 import { buf32 } from '../canvas';
@@ -8,7 +8,7 @@ import {
     skyRow, skyGlowX, skyGlowY, skyGlow,
     cloudFull, CLOUD_FULL_H, cloudAlphaAt,
 } from '../sky';
-import { STARS, starState, MILKYWAY, milkyState, starTwinklePhase, starTwinkleFreq } from '../astronomy/stars';
+import { STARS, starState, starTwinklePhase, starTwinkleFreq } from '../astronomy/stars';
 import { PLANETS, planetState } from '../astronomy/planets';
 import { PX_PER_RAD_H } from './voxel';
 
@@ -62,44 +62,6 @@ export function DrawBackground() {
                 }
             }
             buf32[base + x] = pxc;
-        }
-    }
-
-    // --- Milky Way band (별보다 뒤) ---
-    if (sun.altDeg < -6) {
-        var mwDark = (-sun.altDeg - 6) / 6;
-        if (mwDark > 1) mwDark = 1;
-        mwDark *= (1 - weather.cloudiness * 0.9);
-        if (mwDark > 0.05) {
-            for (var mj = 0; mj < MILKYWAY.length; mj++) {
-                var mws = milkyState[mj];
-                if (mws.altRad < 0) continue;
-                var mdlt = mws.azRad + camera.angle;
-                mdlt = ((mdlt + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-                if (Math.abs(mdlt) > Math.PI / 2) continue;
-                var mxp = (SCR_W / 2 + mdlt * PX_PER_RAD_H) | 0;
-                var myp = (camera.horizon - mws.altRad * (camera.horizon / (Math.PI / 2))) | 0;
-                if (mxp < 0 || mxp >= SCR_W || myp < 0 || myp >= SCR_H) continue;
-                var mCov = cloudAlphaAt(mxp, myp, horizonY);
-                if (mCov > 0.5) continue;
-                var mwa = mwDark * MILKYWAY[mj].dens * 0.35 * (1 - mCov);
-                for (var mdy = -1; mdy <= 1; mdy++) {
-                    for (var mdx = -1; mdx <= 1; mdx++) {
-                        var lxm2 = mxp + mdx, lym2 = myp + mdy;
-                        if (lxm2 < 0 || lxm2 >= SCR_W || lym2 < 0 || lym2 >= SCR_H) continue;
-                        var falloff = (mdx === 0 && mdy === 0) ? 1 : 0.4;
-                        var aM = mwa * falloff;
-                        if (aM < 0.005) continue;
-                        var idxm = lym2 * SCR_W + lxm2;
-                        var bgm = buf32[idxm];
-                        var bRm = bgm & 0xFF, bGm = (bgm >> 8) & 0xFF, bBm = (bgm >> 16) & 0xFF;
-                        var nRm = (bRm + (200 - bRm) * aM) | 0;
-                        var nGm = (bGm + (210 - bGm) * aM) | 0;
-                        var nBm = (bBm + (235 - bBm) * aM) | 0;
-                        buf32[idxm] = 0xFF000000 | (nBm << 16) | (nGm << 8) | nRm;
-                    }
-                }
-            }
         }
     }
 
