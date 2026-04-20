@@ -6,6 +6,8 @@ import { extname, join, normalize, resolve } from 'node:path';
 // public/ 에 넣으면 build 시 dist/ 로 전부 복사되어 재앙 — middleware 로 루트에서 직접 서빙.
 const mimeByExt: Record<string, string> = {
   '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
   '.json': 'application/json',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -39,6 +41,7 @@ function rootAssetsMiddleware(rootDir: string): Plugin {
 const rootDir = resolve(__dirname);
 
 export default defineConfig({
+  base: process.env.VITE_BASE || '/',
   plugins: [rootAssetsMiddleware(rootDir)],
   server: { port: 8089, strictPort: false },
   preview: { port: 8089 },

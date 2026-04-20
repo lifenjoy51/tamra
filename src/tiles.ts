@@ -53,7 +53,7 @@ export async function loadTile(tx: number, ty: number): Promise<void> {
 
         if (hasFile) {
             try {
-                var img = await loadImage('tiles/h_' + pad2(tx) + '_' + pad2(ty) + '.png');
+                var img = await loadImage('tiles/h_' + pad2(tx) + '_' + pad2(ty) + '.webp');
                 tmpCtx.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
                 tmpCtx.drawImage(img, 0, 0);
                 var data = tmpCtx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;

@@ -19,8 +19,15 @@ npm install        # 최초 1회
 npm run dev        # HMR dev 서버 → http://localhost:8089
 
 # 프로덕션 빌드
-npm run build      # dist/index.html + dist/assets/index-[hash].js
+npm run build      # dist/ 만 — tiles 미포함, ~150ms
 npx vite preview   # 번들 미리보기 (포트 8089)
+
+# 배포 번들 (Caddy 서브패스 /tamra 기준)
+npm run release          # release/tamra/ = dist + tiles(WebP) + boat.png, rsync 증분
+npm run release:zip      # release/tamra.zip (~63KB, tiles 제외) — 재배포 기본
+npm run release:tile:zip # release/tamra-tile.zip (~207MB, tiles 포함) — 초기/타일 변경
+npm run release:clean    # release/ 정리
+# 상세 배포 절차: docs/DEPLOY.md
 
 # PNG 재생성 (raw → heightmap + colormap)
 python3 generate_maps.py

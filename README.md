@@ -18,11 +18,24 @@ npm run dev        # 개발 서버 (포트 8089, HMR)
 프로덕션 빌드:
 
 ```bash
-npm run build      # dist/index.html + dist/assets/index-[hash].js
-npx vite preview   # 번들 미리보기 (포트 8089)
+npm run build          # dist/index.html + dist/assets/index-[hash].js (~150ms)
+npx vite preview       # 번들 미리보기 (포트 8089)
 ```
 
-타일 데이터(`tiles/`)는 심볼릭 링크로 공용 디렉토리를 참조 — `vite.config.ts` middleware 가 레포 루트에서 직접 서빙한다 (asset graph 밖). `dist/` 에는 tiles 포함되지 않으므로 배포 시 dist/ 옆에 별도 배치.
+배포 번들 만들기:
+
+```bash
+npm run release          # release/tamra/ = dist + tiles(WebP) + boat.png (~1초, 증분)
+npm run release:zip      # release/tamra.zip (~63KB, tiles 제외) — 평상시 재배포
+npm run release:tile:zip # release/tamra-tile.zip (~207MB, tiles 포함) — 초기/타일 변경 시
+npm run release:clean    # release/ 비우기
+```
+
+- **`release`** 는 `rsync` 증분 복사라 tiles 8,496개는 처음 한 번만 오래 걸리고 이후 재실행은 ~1초. tiles 는 불변이므로 `tile_index.json` + `h_*.webp` 만 동기화 (`c_*.png` 제외).
+- **`VITE_BASE=/tamra/`** 로 빌드되어 서브패스 배포(`https://host/tamra/`) 가능. 다른 경로에 배포하려면 `package.json` 의 `release` 스크립트에서 `VITE_BASE` 값 조정.
+- 정적 호스팅 쪽엔 `tamra.zip` 만 올리고 압축 해제 후 디렉토리 루트를 웹서버에 연결 (Caddy 예시는 [docs/DEPLOY.md](docs/DEPLOY.md) 참고).
+
+타일 데이터(`tiles/`)는 레포 루트에 실제 디렉토리 — `vite.config.ts` middleware 가 dev/preview 모드에서 asset graph 밖으로 직접 서빙한다. `npm run build` 는 `dist/` 로 tiles 를 복사하지 않으므로 여러 번 빌드해도 빠르다.
 
 ## 조작법
 
@@ -64,6 +77,7 @@ npx vite preview   # 번들 미리보기 (포트 8089)
 - **[DESIGN.md](DESIGN.md)** — 설계 결정의 배경 ("왜 이렇게")
 - **[CLAUDE.md](CLAUDE.md)** — 작업용 빠른 참조 (LLM/엔지니어)
 - **[docs/PIPELINE.md](docs/PIPELINE.md)** — DEM → 전세계 타일 빌드 파이프라인
+- **[docs/DEPLOY.md](docs/DEPLOY.md)** — 배포 절차 (Caddy 서브패스, Oracle Cloud 기준)
 - **[docs/GLOSSARY.md](docs/GLOSSARY.md)** — 용어 사전 + 참고문헌 (항해·기상·천문·렌더)
 
 ## 파일 구조

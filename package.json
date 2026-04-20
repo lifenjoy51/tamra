@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite --port 8089",
     "build": "vite build",
-    "preview": "vite preview --port 8089"
+    "preview": "vite preview --port 8089",
+    "release": "VITE_BASE=/tamra/ vite build && mkdir -p release/tamra/tiles && rsync -a --delete --exclude tiles dist/ release/tamra/ && cp boat.png release/tamra/ && rsync -a --include=tile_index.json --include='h_*.webp' --exclude='*' tiles/ release/tamra/tiles/",
+    "release:zip": "npm run release && cd release && rm -f tamra.zip && zip -q -9 -r tamra.zip tamra -x 'tamra/tiles/h_*.webp' && ls -lh tamra.zip",
+    "release:tile:zip": "npm run release && cd release && rm -f tamra-tile.zip && zip -q -9 -r tamra-tile.zip tamra && ls -lh tamra-tile.zip",
+    "release:clean": "rm -rf release/tamra release/tamra.zip release/tamra-tile.zip"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

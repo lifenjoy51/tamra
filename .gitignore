@@ -14,5 +14,6 @@ tamra-network.txt
 # Node / Vite
 node_modules/
 dist/
+release/
 *.tsbuildinfo
 .vite/
