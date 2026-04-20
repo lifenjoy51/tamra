@@ -164,9 +164,10 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 은하수 + 별 + 행성 + �
 
 ### 타일 시스템 (글로벌 좌표 + 링 버퍼)
 
-- 전세계 `169 x 85` 타일(`512x512`, ~230km/tile). 해안선 주변만 생성 (strict coast + 5x5 버퍼 = 8,496 타일)
+- 전세계 `176 x 88` 타일(`512x512`, ~227km/tile). 해안선 주변만 생성 (strict coast + 5x5 버퍼 = 8,836 타일)
 - **`tile_index.json`이 source of truth**: 여기 없는 타일은 로더에서 무시
 - **8x8 슬롯 버퍼(4096x4096)**: 타일 `(tx,ty)` → 슬롯 `(tx%8, ty%8)`. 글로벌 좌표 `& MASK` = 버퍼 위치
+- `WORLD_TILES_X=176`, `WORLD_TILES_Y=88` 둘 다 BUF_TILES=8 의 배수 → antimeridian 포함 어느 지점에서도 slot 충돌 없음 (원본 DEM 을 1회 업스케일해 512 배수로 맞춘 결과 — `upscale_heightmap.py`, [docs/PIPELINE.md](docs/PIPELINE.md) 참조)
 - 5x5 로드 범위(1280) > 렌더 거리(800) → 뒤쪽 오래된 타일 안 보임
 - `ensureTilesLoaded()`가 배 주변 5x5 async 로드. 순수 바다 타일은 파일 없이 flat fill
 

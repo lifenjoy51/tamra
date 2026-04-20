@@ -20,17 +20,19 @@ import numpy as np
 from PIL import Image
 
 
-SOURCE_WIDTH = 86400
-SOURCE_HEIGHT = 43200
+SOURCE_WIDTH = 90112   # = 176 * 512, BUF_TILES=8 링버퍼 wrap 자연 지원
+SOURCE_HEIGHT = 45056  # = 88 * 512, 세로도 BUF_TILES 의 배수
 TILE_SIZE = 512
 BUFFER_RADIUS = 2  # 5x5 neighborhood around strict coast
 BORDER = 1
 GRID_COLS = (SOURCE_WIDTH + TILE_SIZE - 1) // TILE_SIZE
 GRID_ROWS = (SOURCE_HEIGHT + TILE_SIZE - 1) // TILE_SIZE
-PIXEL_DEG = 1.0 / 240.0
+PIXEL_DEG = 360.0 / SOURCE_WIDTH  # 업스케일 후 ≈ 3.9948e-3 deg/px
 DEG_PER_TILE = TILE_SIZE * PIXEL_DEG
 FULL_TILE_COLS = SOURCE_WIDTH // TILE_SIZE
-WRAP_WIDTH = GRID_COLS * TILE_SIZE - SOURCE_WIDTH
+WRAP_WIDTH = GRID_COLS * TILE_SIZE - SOURCE_WIDTH  # 176*512==90112 → 0
+FULL_TILE_ROWS = SOURCE_HEIGHT // TILE_SIZE        # 88
+WRAP_HEIGHT = GRID_ROWS * TILE_SIZE - SOURCE_HEIGHT  # 0
 SEA = 64
 
 SEGMENTS = [
@@ -44,7 +46,7 @@ SEGMENTS = [
 ]
 
 DEFAULT_SOURCE = Path(
-    "/Users/joey51/works/heightmap/final_heightmap.raw"
+    "/Users/joey51/works/heightmap/final_heightmap_176x88.raw"
 )
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "tiles"
 CACHE_VERSION = 3
@@ -321,15 +323,18 @@ def classify_tiles(source: np.memmap) -> ClassificationResult:
         west_water[ty, :FULL_TILE_COLS, :tile_h] = np.swapaxes(main[:, :, 0] <= 0, 0, 1)
         east_water[ty, :FULL_TILE_COLS, :tile_h] = np.swapaxes(main[:, :, -1] <= 0, 0, 1)
 
-        east = block[:, FULL_TILE_COLS * TILE_SIZE :]
-        west = block[:, :WRAP_WIDTH]
-        wrapped = np.concatenate([east, west], axis=1)
-        has_land[ty, FULL_TILE_COLS] = wrapped.max() > 0
-        has_water[ty, FULL_TILE_COLS] = wrapped.min() <= 0
-        north_water[ty, FULL_TILE_COLS] = wrapped[0] <= 0
-        south_water[ty, FULL_TILE_COLS] = wrapped[-1] <= 0
-        west_water[ty, FULL_TILE_COLS, :tile_h] = wrapped[:, 0] <= 0
-        east_water[ty, FULL_TILE_COLS, :tile_h] = wrapped[:, -1] <= 0
+        # WRAP_WIDTH > 0 이면 antimeridian partial 타일 처리.
+        # 176x88 업스케일 후 SOURCE_WIDTH == GRID_COLS*TILE_SIZE 이므로 이 블록은 skip.
+        if WRAP_WIDTH > 0:
+            east = block[:, FULL_TILE_COLS * TILE_SIZE :]
+            west = block[:, :WRAP_WIDTH]
+            wrapped = np.concatenate([east, west], axis=1)
+            has_land[ty, FULL_TILE_COLS] = wrapped.max() > 0
+            has_water[ty, FULL_TILE_COLS] = wrapped.min() <= 0
+            north_water[ty, FULL_TILE_COLS] = wrapped[0] <= 0
+            south_water[ty, FULL_TILE_COLS] = wrapped[-1] <= 0
+            west_water[ty, FULL_TILE_COLS, :tile_h] = wrapped[:, 0] <= 0
+            east_water[ty, FULL_TILE_COLS, :tile_h] = wrapped[:, -1] <= 0
 
     ocean = mark_ocean_connected_tiles(
         north_water=north_water,

@@ -1,8 +1,10 @@
 // input.ts — 키보드 + 포인터 핸들러.
-// 회전(A/D) / 이동(W/S) / 스텝 조절([/]/,/.) / 미니맵 축척(-/=) / 시간속도(T/Y) /
+// 러더(A/D) / 돛(W/S) / 스텝 조절([/]/,/.) / 미니맵 축척(-/=) / 시간속도(T/Y) /
 // 하늘보기(K) / 음소거(M). hold 시 브라우저 auto-repeat 로 연속 효과.
+// A/D 는 즉시 각도를 바꾸지 않고 boat.rudder 만 조정 — 실제 회전은 UpdateCamera 에서
+// rudder × sailMS × RUDDER_GAIN × dt 로 서서히 적용.
 import { TIME_SPEED_MIN, TIME_SPEED_MAX } from './config';
-import { boat, timeRef, uiFlags } from './state';
+import { boat, timeRef, uiFlags, RUDDER_STEP } from './state';
 import { mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
 import { audio, resumeAudio, setMuted, uiBlip } from './audio';
 
@@ -19,16 +21,24 @@ export function initInput() {
     document.onkeydown = function(e) {
         resumeAudio();
         switch (e.keyCode) {
-            case 87: case 38: // W, Up: 돛 펼침
-                if (!boat.sailUp) uiBlip(520);
-                boat.sailUp = true;
+            case 87: case 38: // W, Up: 돛 한 단계 펼침 (DOWN→HALF→FULL)
+                if (boat.sail < 1) {
+                    boat.sail = Math.min(1, boat.sail + 0.5);
+                    uiBlip(520);
+                }
                 break;
-            case 83: case 40: // S, Down: 돛 접음
-                if (boat.sailUp) uiBlip(340);
-                boat.sailUp = false;
+            case 83: case 40: // S, Down: 돛 한 단계 접음 (FULL→HALF→DOWN)
+                if (boat.sail > 0) {
+                    boat.sail = Math.max(0, boat.sail - 0.5);
+                    uiBlip(340);
+                }
                 break;
-            case 65: case 37: boat.angle += inputState.rotStep; break; // A, Left
-            case 68: case 39: boat.angle -= inputState.rotStep; break; // D, Right
+            case 65: case 37: // A, Left: 키를 왼쪽으로 (음수). 회전은 점진적.
+                boat.rudder = Math.max(-1, boat.rudder - RUDDER_STEP);
+                break;
+            case 68: case 39: // D, Right: 키를 오른쪽으로 (양수).
+                boat.rudder = Math.min( 1, boat.rudder + RUDDER_STEP);
+                break;
             case 187: // '=' / '+' : 미니맵 확대
                 mmState.stride = Math.max(MM_STRIDE_MIN, mmState.stride / 1.5);
                 break;

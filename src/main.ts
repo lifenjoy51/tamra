@@ -39,16 +39,21 @@ import { DrawBoat, initBoatSprite, boatSprite } from './render/boat-sprite';
 import { DrawSkyMap } from './render/skymap';
 import { updateAudio } from './audio';
 import { initInput, inputState } from './input';
+import { initRudderUI, updateRudderUI } from './ui/rudder';
+import { initSailUI, updateSailUI } from './ui/sail';
+import { initToggleUI, updateToggleUI } from './ui/toggle';
+import { initDebugPanel } from './ui/debug-panel';
 import { initDebugHooks } from './debug';
 
 (async function () {
 
 // --- 초기 로드: tile_index + 시작 지역 5x5 + boat 스프라이트 ---
-var startGx = 0, startGy = 0;
+var startGx = 0, startGy = 0, startAngle = 0;
 try {
     var tilesInit = await initTiles();
     startGx = tilesInit.startGx;
     startGy = tilesInit.startGy;
+    startAngle = tilesInit.startAngle;
     await initBoatSprite();
 } catch (e) {
     document.getElementById('loading').innerHTML =
@@ -60,23 +65,31 @@ try {
 
 document.getElementById('loading').style.display = 'none';
 canvas.style.display = 'block';
-document.getElementById('hud').style.display = 'block';
 var gameUiEl = document.getElementById('gameui');
 gameUiEl.style.display = 'block';
 var debugEl = document.getElementById('debug');
+var debugTextEl = document.getElementById('debug-text');
+var dbgTimeVal = document.getElementById('dbg-time-val');
+var dbgMapVal = document.getElementById('dbg-map-val');
 debugEl.style.display = 'block';
 
 // --- Boat (플레이어 조종 대상) ---
 // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H). tile init 이후 주입
 boat.gx = startGx;
 boat.gy = startGy;
+boat.angle = startAngle;
 camera.x = boat.gx;
 camera.y = boat.gy;
+camera.angle = boat.angle;
 
 computeSun();
 computeWind();
 
 initInput();
+initRudderUI();
+initSailUI();
+initToggleUI();
+initDebugPanel();
 initDebugHooks();
 
 // --- Main Draw loop (20fps cap) ---
@@ -86,42 +99,24 @@ initDebugHooks();
 function UpdateDebug() {
     var tx = Math.floor(boat.gx / TILE_SIZE);
     var ty = Math.floor(boat.gy / TILE_SIZE);
-    var slot = (ty % BUF_TILES) * BUF_TILES + (tx % BUF_TILES);
-    var angDeg = (((boat.angle * 180 / Math.PI) % 360) + 360) % 360;
-    var bOff = ((Math.floor(boat.gy) & MASK) << SHIFT) + (Math.floor(boat.gx) & MASK) | 0;
-    var bAlt = altitude[bOff];
-    var loaded = 0;
-    for (var si = 0; si < slotTiles.length; si++) if (slotTiles[si] !== null) loaded++;
     var windDeg = (wind.angleRad * 180 / Math.PI) % 360;
     var wDegStr = ((windDeg | 0) + 1000).toString().slice(1);
     var latStr = Math.abs(sun.lat).toFixed(2) + '°' + (sun.lat >= 0 ? 'N' : 'S');
     var lonStr = Math.abs(sun.lon).toFixed(2) + '°' + (sun.lon >= 0 ? 'E' : 'W');
-    var hh = Math.floor(sun.hourLocal);
-    var mm = Math.floor((sun.hourLocal - hh) * 60);
-    var hhmm = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
 
-    // 게임 UI: 월/일 + 시:분 (인게임 시각 표시)
-    gameUiEl.textContent = sun.month + '월 ' + sun.date + '일  ' + hhmm;
+    gameUiEl.textContent = sun.month + '/' + sun.date;
 
-    debugEl.textContent =
-        'Tile:    ' + tx + ',' + ty + ' (slot ' + slot + ')\n' +
-        'Pos:     ' + (boat.gx | 0) + ',' + (boat.gy | 0) + '\n' +
-        'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
-        'Time:    ' + hhmm + '  (x' + timeRef.TIME_SPEED + ')\n' +
-        'Sun:     alt ' + sun.altDeg.toFixed(0) + '°, az ' + sun.azDeg.toFixed(0) + '°\n' +
-        'Ang:     ' + (angDeg | 0) + '°\n' +
-        'Alt:     ' + bAlt + (bAlt <= SEA ? ' (sea)' : ' (land)') + '\n' +
-        'CamH:    ' + camera.heightMeters.toFixed(1) + 'm\n' +
+    debugTextEl.textContent =
         'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
-        'Sail:    ' + (boat.sailUp ? 'UP  ' : 'DOWN') + ' ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
-        'Ship:    ' + ship.groundMS.toFixed(2) + ' m/s (' + (ship.groundMS * 3.6).toFixed(1) + ' km/h)\n' +
         'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
         'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
-        'Step:    ' + inputState.moveStep + 'u / ' + (inputState.rotStep * 180 / Math.PI).toFixed(2) + '°\n' +
-        'Tiles:   ' + loaded + '/' + slotTiles.length + '\n' +
-        'MMZoom:  1:' + mmState.stride + '\n' +
-        'FPS:     ' + frameStats.fpsCurrent + '\n' +
-        'Frame:   ' + frameStats.frameTimeEma.toFixed(2) + 'ms';
+        'Sail:    ' + (boat.sail === 0 ? 'DOWN' : boat.sail === 0.5 ? 'HALF' : 'FULL') + ' ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')\n' +
+        'Ship:    ' + (ship.groundMS * 3.6).toFixed(1) + ' km/h / ' + (((ship.groundDirRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '°\n' +
+        'Tile:    ' + tx + ',' + ty + '  (' + (boat.gx | 0) + ',' + (boat.gy | 0) + ')\n' +
+        'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
+        'FPS:     ' + frameStats.fpsCurrent + ' / ' + frameStats.frameTimeEma.toFixed(2) + 'ms';
+    dbgTimeVal.textContent = '×' + timeRef.TIME_SPEED;
+    dbgMapVal.textContent = 'stride ' + mmState.stride.toFixed(2);
 }
 
 function Draw(now) {
@@ -139,8 +134,12 @@ function Draw(now) {
     drawPrecipitation();
     drawLightning();
     updateAudio();
-    DrawMinimap();
+    // 미니맵은 디버그 패널과 연동 — 패널 숨기면 미니맵도 숨김.
+    if (uiFlags.debugVisible) DrawMinimap();
     DrawBoat();
+    updateRudderUI();
+    updateSailUI();
+    updateToggleUI();
     DrawSkyMap();
     var frameDur = performance.now() - frameStart;
     // EMA alpha=0.1 — 약 10프레임 윈도우

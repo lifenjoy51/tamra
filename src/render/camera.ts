@@ -5,7 +5,7 @@ import { MASK, SHIFT, SEA, WORLD_W, WORLD_H } from '../config';
 import {
     boat, ship, camera, current,
     timeRef, frameStats, uiFlags,
-    BASE_CAM_METERS, CAM_HEIGHT_MARGIN,
+    BASE_CAM_METERS, CAM_HEIGHT_MARGIN, RUDDER_POWER, RUDDER_TAU,
 } from '../state';
 import { heightMeters } from '../terrain';
 import { altitude, ensureTilesLoaded } from '../tiles';
@@ -64,7 +64,16 @@ export function UpdateCamera() {
     // 이동: UNIT_M = 400 m/unit → units = m/s × gameSeconds / 400
     var gameDt = uiFlags.skyMapOn ? 0 : (dtMs * timeRef.TIME_SPEED) / 1000;
     if (gameDt > 0) {
-        if (boat.sailUp && ship.sailMS > 0.01) {
+        // 러더 유체역학 (1차 응답, exact exponential):
+        //   목표 yaw = rudder × sailMS × POWER (rad / game-sec). sailMS 는 돛 추진력 — 해류
+        //   drift 는 물과 함께 움직이므로 러더 효과에 기여 안 함.
+        //   yawRate 는 τ=RUDDER_TAU 로 목표에 지수 감쇠 수렴 — 키 꺾어도 즉시 회전 점프 안 함.
+        //   rudder=+1(우) → yaw > 0 → angle 감소 (convention: 0=북, π/2=동, 증가=반시계).
+        var targetYaw = boat.rudder * ship.sailMS * RUDDER_POWER;
+        var decay = Math.exp(-gameDt / RUDDER_TAU);
+        boat.yawRate = targetYaw + (boat.yawRate - targetYaw) * decay;
+        boat.angle -= boat.yawRate * gameDt;
+        if (boat.sail > 0 && ship.sailMS > 0.01) {
             var sU = ship.sailMS * gameDt / 400;
             moveBoat(-Math.sin(boat.angle) * sU, -Math.cos(boat.angle) * sU);
         }

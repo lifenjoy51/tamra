@@ -20,14 +20,6 @@
             image-rendering: pixelated;
             image-rendering: crisp-edges;
         }
-        #hud {
-            display: none;
-            position: fixed;
-            bottom: 16px;
-            color: #665;
-            font-size: 11px;
-            text-align: center;
-        }
         #loading {
             color: #555;
             font-size: 14px;
@@ -36,20 +28,77 @@
         }
         #debug {
             display: none;
-            position: fixed;
-            bottom: 12px;
-            right: 12px;
+            position: absolute;
+            top: 48px;
+            left: 12px;
             background: rgba(0, 0, 0, 0.65);
             color: #c8e8ff;
             font-size: 12px;
             font-family: ui-monospace, Menlo, Consolas, monospace;
             padding: 8px 12px;
             line-height: 1.5;
-            white-space: pre;
             border: 1px solid rgba(200, 230, 255, 0.25);
             border-radius: 3px;
-            pointer-events: none;
+            user-select: none;
         }
+        #debug #debug-text {
+            margin: 0;
+            white-space: pre;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+            color: inherit;
+        }
+        /* Time / Map 인라인 컨트롤 (toggle-ui 안). 디버그 패널 열림일 때만 노출. */
+        .dbg-inline-sep {
+            width: 1px;
+            align-self: stretch;
+            background: rgba(200, 230, 255, 0.25);
+            margin: 0 4px;
+        }
+        .dbg-inline-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 2px;
+            font-size: 11px;
+            color: rgba(200, 230, 255, 0.8);
+        }
+        .dbg-inline-row .dbg-label {
+            opacity: 0.8;
+        }
+        .dbg-inline-row .dbg-val {
+            display: inline-block;
+            min-width: 72px;
+            font-variant-numeric: tabular-nums;
+            color: #c8e8ff;
+        }
+        .dbg-btn {
+            width: 28px;
+            height: 16px;
+            background: transparent;
+            color: rgba(200, 230, 255, 0.6);
+            border: 1px solid rgba(200, 230, 255, 0.25);
+            border-radius: 2px;
+            font-family: inherit;
+            font-size: 10px;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+        }
+        .dbg-btn:hover {
+            color: #c8e8ff;
+            border-color: rgba(200, 230, 255, 0.45);
+            background: rgba(200, 230, 255, 0.08);
+        }
+        .dbg-btn:active {
+            background: rgba(200, 230, 255, 0.18);
+        }
+        /* 디버그 꺼진 상태에선 인라인 컨트롤 숨김 */
+        #toggle-ui .dbg-inline-row,
+        #toggle-ui .dbg-inline-sep { display: none; }
+        #toggle-ui.debug-on .dbg-inline-row { display: flex; }
+        #toggle-ui.debug-on .dbg-inline-sep { display: block; }
         #canvas-wrap {
             position: relative;
         }
@@ -57,7 +106,7 @@
             display: none;
             position: absolute;
             top: 12px;
-            left: 12px;
+            right: 12px;
             color: #e8e4d0;
             font-size: 16px;
             font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -67,16 +116,170 @@
             pointer-events: none;
             letter-spacing: 0.5px;
         }
+        /* 러더 UI: 우하단, 드래그 가능. */
+        #rudder-ui {
+            display: none;
+            position: absolute;
+            bottom: 24px;
+            right: 12px;
+            width: 200px;
+            height: 28px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(200, 230, 255, 0.25);
+            border-radius: 3px;
+            box-sizing: border-box;
+            touch-action: none;
+            user-select: none;
+        }
+        #rudder-ui .rudder-track {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            cursor: ew-resize;
+        }
+        #rudder-ui .rudder-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 1px;
+            height: 16px;
+            background: rgba(200, 230, 255, 0.5);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #rudder-ui .rudder-handle {
+            position: absolute;
+            top: 3px;
+            left: 50%;
+            width: 10px;
+            height: 22px;
+            background: #c8e8ff;
+            border: 1px solid rgba(0, 0, 0, 0.5);
+            border-radius: 2px;
+            transform: translateX(-50%);
+            pointer-events: none;
+        }
+        /* 돛 UI: 3단 세그먼트 (DOWN/HALF/FULL). 우하단 러더 위. */
+        #sail-ui {
+            display: none;
+            position: absolute;
+            bottom: 60px;
+            right: 12px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(200, 230, 255, 0.25);
+            border-radius: 3px;
+            padding: 2px;
+            gap: 2px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            user-select: none;
+        }
+        #sail-ui.ready { display: flex; }
+        #sail-ui .sail-seg {
+            width: 56px;
+            height: 22px;
+            background: transparent;
+            color: rgba(200, 230, 255, 0.55);
+            border: 1px solid transparent;
+            border-radius: 2px;
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            padding: 0;
+        }
+        #sail-ui .sail-seg.active {
+            background: rgba(200, 230, 255, 0.18);
+            color: #c8e8ff;
+            border-color: rgba(200, 230, 255, 0.35);
+        }
+        #sail-ui .sail-seg:hover:not(.active) {
+            color: #e8f4ff;
+        }
+        /* 토글 아이콘 컨테이너 (공통). i: 우상단, ★: 우하단(돛 UI 위). */
+        #toggle-ui, #sky-ui {
+            display: none;
+            position: absolute;
+            gap: 2px;
+            padding: 2px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(200, 230, 255, 0.25);
+            border-radius: 3px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            user-select: none;
+        }
+        #toggle-ui { top: 12px; left: 12px; }
+        #sky-ui    { bottom: 96px; right: 12px; }
+        #toggle-ui.ready,
+        #sky-ui.ready { display: flex; }
+        #toggle-ui .btn-toggle,
+        #sky-ui .btn-toggle {
+            width: 28px;
+            height: 24px;
+            background: transparent;
+            color: rgba(200, 230, 255, 0.55);
+            border: 1px solid transparent;
+            border-radius: 2px;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #toggle-ui .btn-toggle.active,
+        #sky-ui .btn-toggle.active {
+            background: rgba(200, 230, 255, 0.18);
+            color: #c8e8ff;
+            border-color: rgba(200, 230, 255, 0.35);
+        }
+        #toggle-ui .btn-toggle:hover:not(.active),
+        #sky-ui .btn-toggle:hover:not(.active) {
+            color: #e8f4ff;
+        }
     </style>
 </head>
 <body>
 <div id="loading">지형 데이터 로딩 중...</div>
 <div id="canvas-wrap">
     <canvas id="c"></canvas>
+    <div id="debug">
+        <pre id="debug-text"></pre>
+    </div>
     <div id="gameui"></div>
+    <div id="toggle-ui">
+        <button class="btn-toggle" id="btn-debug" title="디버그 패널">i</button>
+        <div class="dbg-inline-sep"></div>
+        <div class="dbg-inline-row">
+            <span class="dbg-label">Time</span>
+            <span class="dbg-val" id="dbg-time-val"></span>
+            <button class="dbg-btn" data-act="time-down" title="시간 감속 (T)">÷2</button>
+            <button class="dbg-btn" data-act="time-up" title="시간 가속 (Y)">×2</button>
+        </div>
+        <div class="dbg-inline-sep"></div>
+        <div class="dbg-inline-row">
+            <span class="dbg-label">Map</span>
+            <span class="dbg-val" id="dbg-map-val"></span>
+            <button class="dbg-btn" data-act="map-out" title="축소 (−)">−</button>
+            <button class="dbg-btn" data-act="map-in" title="확대 (+)">+</button>
+        </div>
+    </div>
+    <div id="sky-ui">
+        <button class="btn-toggle" id="btn-sky" title="하늘보기 (K)">★</button>
+    </div>
+    <div id="sail-ui">
+        <button class="sail-seg" data-v="0">DOWN</button>
+        <button class="sail-seg" data-v="0.5">HALF</button>
+        <button class="sail-seg" data-v="1">FULL</button>
+    </div>
+    <div id="rudder-ui">
+        <div class="rudder-track">
+            <div class="rudder-center"></div>
+            <div class="rudder-handle"></div>
+        </div>
+    </div>
 </div>
-<div id="hud">W·S 돛 펼침/접음 │ A·D 조타</div>
-<div id="debug"></div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

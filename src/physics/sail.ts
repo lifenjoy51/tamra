@@ -30,7 +30,8 @@ export function computeSail() {
 
 // 선체 속도 합성: 돛 추진 + 해류 drift → ground velocity
 export function updateShipSpeed() {
-    var sMS = boat.sailUp ? sail.polar * sail.windFactor * BASE_SAIL_SPEED : 0;
+    // boat.sail: 0(접음)/0.5(절반)/1(완전). 면적 비례 추진력 → 선형 scale.
+    var sMS = sail.polar * sail.windFactor * BASE_SAIL_SPEED * boat.sail;
     ship.sailMS = sMS;
     // 돛 추진: 선수 방향. boat.angle 0=북 기준 세계좌표 벡터 (-sin, -cos)
     var sVx = -Math.sin(boat.angle) * sMS;

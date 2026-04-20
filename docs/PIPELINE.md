@@ -1,17 +1,20 @@
 # PIPELINE.md — DEM → 전세계 타일 빌드
 
-이 문서는 원본 DEM(7GB)에서 시뮬레이터가 사용하는 8,496개 해안선 타일을 추출하는 배치 파이프라인을 설명한다. **빌드 운영자/데이터 갱신 담당** 대상.
+이 문서는 원본 DEM(7GB)에서 시뮬레이터가 사용하는 8,836개 해안선 타일을 추출하는 배치 파이프라인을 설명한다. **빌드 운영자/데이터 갱신 담당** 대상.
 
 ## 원본 데이터
 
 | 파일 | 해상도 | 크기 |
 |---|---|---|
-| `final_heightmap.raw` | 86400×43200 (~450m/pixel) | 7.0GB |
+| `final_heightmap.raw` (원본) | 86400×43200 (~450m/pixel) | 7.0GB |
+| `final_heightmap_176x88.raw` (업스케일) | 90112×45056 (~443m/pixel) | 8.1GB |
 
 - 형식: ENVI RAW, Int16, WGS-84
 - 좌표계: 전세계 (-180~+180 경도, -90~+90 위도)
 - 고도 범위: -10,922m ~ +8,375m
-- 위치: `~/works/heightmap/final_heightmap.raw` (저장소 외부)
+- 위치: `~/works/heightmap/` (저장소 외부)
+
+**업스케일 이유**: 원본 `86400×43200` 은 타일 크기 512 로 나누면 `168.75 × 84.375` — BUF_TILES=8 링버퍼와 서로소(169%8=1, 85%8=5)라 antimeridian/고위도에서 slot 충돌이 발생했다. `upscale_heightmap.py` 로 512 배수 `90112×45056` (가로 176 × 세로 88 타일) 으로 한 번 업스케일하면 `176%8=0, 88%8=0` 으로 wrap 이 구조적으로 정합. equirectangular 2:1 비율 유지, bilinear smoothing ±1 unit 허용, 1회성 처리 ~90초.
 
 ## 높이 매핑: 구간별 선형 (Piecewise Linear)
 
@@ -34,16 +37,17 @@
 
 ## 타일 그리드
 
-- 그리드: **169열 × 85행 = 14,365 타일** (`512x512`, ~230km/tile)
-- 타일 좌표 → 지리: `lon = -180 + tx × 2.133°`, `lat = 90 - ty × 2.133°`
-- 제주도 중심권: 타일 `(143, 26)` 부근
+- 그리드: **176열 × 88행 = 15,488 타일** (`512x512`, ~227km/tile)
+- 타일 좌표 → 지리: `lon = -180 + tx × 2.045°`, `lat = 90 - ty × 2.045°`
+- 제주도 중심권: 타일 `(149, 27)` 부근 (업스케일 후 좌표, 이전 `143,26`)
 
 ## 스크립트
 
 ```bash
+python3 upscale_heightmap.py                    # 1회성: 원본 → 90112×45056 업스케일
 python3 generate_world_tiles.py                 # 전체 실행
 python3 generate_world_tiles.py --classify-only # 분류 통계만 출력
-python3 generate_world_tiles.py --tile 143,26   # 단일 타일 (디버그)
+python3 generate_world_tiles.py --tile 149,27   # 단일 타일 (디버그)
 python3 generate_world_tiles.py --verify        # 제주 타일 기존 PNG와 비교
 ```
 
@@ -74,7 +78,9 @@ python3 generate_world_tiles.py --verify        # 제주 타일 기존 PNG와 �
 | inland water only | 3 |
 | **strict coast** | **2,746** |
 
-경도 방향은 wrap 처리 (col 0 ↔ col 168). 메모리: 타일 분류 마스크 + 경계 water mask. 소요시간: ~10초.
+경도 방향은 wrap 처리 (col 0 ↔ col 175). 메모리: 타일 분류 마스크 + 경계 water mask. 소요시간: ~10초.
+
+업스케일(176×88) 이전에는 `86400 / 512 = 168.75` 로 partial wrap 타일(WRAP_WIDTH=128)이 있어 east+west 연결 특수 처리가 필요했다. 현재는 `90112 = 176×512` 로 wrap partial 이 없어 `WRAP_WIDTH > 0` 분기가 자동 skip된다.
 
 ### Phase 2: 5×5 버퍼 확장
 
@@ -85,7 +91,7 @@ strict coast 타일 주변 반경 2타일, 총 `5×5` 범위로 확장. **완전
 
 ### Phase 3: 타일 생성 (Row-Band 스트리밍)
 
-타일 행(ty) 단위로 원본 읽기 (`514행 × 86400열`, 약 89MB — hillshading용 1px 오버랩 포함).
+타일 행(ty) 단위로 업스케일 raw 읽기 (`514행 × 90112열`, 약 93MB — hillshading용 1px 오버랩 포함).
 
 타일별 처리:
 1. `514×514` 영역 추출 (hillshading 경계용 1px 오버랩)
@@ -105,9 +111,9 @@ strict coast 타일 주변 반경 2타일, 총 `5×5` 범위로 확장. **완전
 
 ```json
 {
-  "grid": { "cols": 169, "rows": 85, "tile_size": 512, "buffer_radius": 2 },
-  "geo": { "origin_lon": -180.0, "origin_lat": 90.0, "deg_per_tile": 2.133 },
-  "tiles": { "143_26": "generated", "144_26": "generated" }
+  "grid": { "cols": 176, "rows": 88, "tile_size": 512, "buffer_radius": 2 },
+  "geo": { "origin_lon": -180.0, "origin_lat": 90.0, "deg_per_tile": 2.0455 },
+  "tiles": { "149_27": "generated", "150_27": "generated" }
 }
 ```
 
@@ -115,11 +121,11 @@ strict coast 타일 주변 반경 2타일, 총 `5×5` 범위로 확장. **완전
 
 | 항목 | 값 |
 |---|---|
-| 생성 타일 수 | 8,496 (`tile_index.json` 기준) |
-| 실제 PNG 파일 수 | 16,992 (h + c 각각) |
-| 디스크 용량 | ~1.3GB |
+| 생성 타일 수 | 8,836 (`tile_index.json` 기준) |
+| 실제 PNG 파일 수 | 17,672 (h + c 각각) |
+| 디스크 용량 | ~1.4GB |
 | 피크 메모리 | ~100MB (1 row-band 기준) |
-| 분류 시간 | ~9.8초 |
+| 분류 시간 | ~10초 |
 | 생성 시간 | 수 분 ~ 10분대 |
 
 ## 검증

@@ -83,7 +83,7 @@ export function updateAudio() {
     audio.windGain.gain.setTargetAtTime(wdg, t, 0.3);
     audio.windFilter.frequency.setTargetAtTime(400 + wind.speedMS * 30, t, 0.3);
     // 돛 펄럭임: 돛 올리고 + AoA가 RUN(180° 근처)일 때 burst
-    var sailActive = boat.sailUp && sail && sail.mode === 'RUN';
+    var sailActive = boat.sail > 0 && sail && sail.mode === 'RUN';
     var nowMs = performance.now();
     if (sailActive && nowMs - lastFlapMs > 1200 + Math.random() * 1800) {
         lastFlapMs = nowMs;
