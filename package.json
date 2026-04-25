@@ -10,7 +10,8 @@
     "release": "VITE_BASE=/tamra/ vite build && mkdir -p release/tamra/tiles && rsync -a --delete --exclude tiles dist/ release/tamra/ && cp boat.png release/tamra/ && rsync -a --include=tile_index.json --include='h_*.webp' --exclude='*' tiles/ release/tamra/tiles/",
     "release:zip": "npm run release && cd release && rm -f tamra.zip && zip -q -9 -r tamra.zip tamra -x 'tamra/tiles/h_*.webp' && ls -lh tamra.zip",
     "release:tile:zip": "npm run release && cd release && rm -f tamra-tile.zip && zip -q -9 -r tamra-tile.zip tamra && ls -lh tamra-tile.zip",
-    "release:clean": "rm -rf release/tamra release/tamra.zip release/tamra-tile.zip"
+    "release:clean": "rm -rf release/tamra release/tamra.zip release/tamra-tile.zip",
+    "lint:deps": "grep -E '^import' src/state.ts && { echo 'state.ts must have zero imports (순환 방지)'; exit 1; } || exit 0"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

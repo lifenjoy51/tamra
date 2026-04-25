@@ -3,7 +3,11 @@
 // hiddeny: 함수 밖에 한 번만 할당 → GC 부담 제거.
 // allSea fast path: 4 이웃 SEA면 bilinear 스킵, 상수 사용.
 // early termination: hiddeny[i]<=0 컬럼 skip + openCount==0 시 z 루프 break.
-import { SCR_W, SCR_H, SEA, SHIFT, MASK } from '../config';
+import {
+    SCR_W, SCR_H, SEA, SHIFT, MASK,
+    RENDER_CURVATURE_COEFF, RENDER_PROJ_SCALE,
+    RENDER_DELTAZ_INIT, RENDER_DELTAZ_STEP, RENDER_WAVE_COLOR_GAIN,
+} from '../config';
 import { buf32 } from '../canvas';
 import { camera, wave, weather } from '../state';
 import { heightMeters } from '../terrain';
@@ -39,12 +43,10 @@ export function Render() {
     hiddeny.fill(SCR_H);
     var openCount = SCR_W;
 
-    var deltaz = 0.5;
+    var deltaz = RENDER_DELTAZ_INIT;
     var camMeters = camera.heightMeters;
 
-    // 지구 곡률: drop_m(z) = (z * UNIT_M)² / (2R). 한국 위도 ~400m/unit.
-    var UNIT_M = 400;
-    var CURVATURE_COEFF = (UNIT_M * UNIT_M) / (2 * 6371000);
+    var CURVATURE_COEFF = RENDER_CURVATURE_COEFF;
     var HEIGHT_SEA = heightMeters[SEA];
 
     var dist = camera.distance;
@@ -72,7 +74,7 @@ export function Render() {
         var dy = (pry - ply) / SCR_W;
         plx += camX;
         ply += camY;
-        var projScale = (SCR_H * 0.0044) / z;
+        var projScale = (SCR_H * RENDER_PROJ_SCALE) / z;
 
         var fog = Math.pow(z / visDist, 1.2);
         if (fog > 1) fog = 1;
@@ -151,7 +153,7 @@ export function Render() {
                 var waveVal = Math.sin(wx * wsdx + wy * wsdy + wt * wss) * wsa;
                 if (waveStage >= 2) waveVal += Math.sin(wx * wmdx + wy * wmdy + wt * wms) * wma;
                 if (waveStage >= 3) waveVal += Math.sin(wx * wrdx + wy * wrdy + wt * wrs) * wra;
-                var wc = waveVal * 7;
+                var wc = waveVal * RENDER_WAVE_COLOR_GAIN;
                 cR += wc; cG += wc; cB += wc * 0.5;
             }
 
@@ -177,7 +179,7 @@ export function Render() {
             plx += dx;
             ply += dy;
         }
-        deltaz += 0.005;
+        deltaz += RENDER_DELTAZ_STEP;
 
         if (openCount <= 0) break;
     }

@@ -21,6 +21,7 @@ npm run dev        # HMR dev 서버 → http://localhost:8089
 # 프로덕션 빌드
 npm run build      # dist/ 만 — tiles 미포함, ~150ms
 npx vite preview   # 번들 미리보기 (포트 8089)
+npm run lint:deps  # state.ts zero-import 회귀 검사
 
 # 배포 번들 (Caddy 서브패스 /tamra 기준)
 npm run release          # release/tamra/ = dist + tiles(WebP) + boat.png, rsync 증분
@@ -29,14 +30,14 @@ npm run release:tile:zip # release/tamra-tile.zip (~207MB, tiles 포함) — 초
 npm run release:clean    # release/ 정리
 # 상세 배포 절차: docs/DEPLOY.md
 
-# PNG 재생성 (raw → heightmap + colormap)
-python3 generate_maps.py
-
-# 전세계 타일 파이프라인
+# 전세계 타일 파이프라인 (프로덕션)
 python3 generate_world_tiles.py                 # 전체 실행
 python3 generate_world_tiles.py --classify-only # 분류 통계만
 python3 generate_world_tiles.py --tile 143,26   # 단일 타일 디버그
 python3 generate_world_tiles.py --verify        # 제주 타일 비교
+
+# Legacy: 제주 1024×1024 단일 PNG 생성 (--verify 비교용만, 신규 작업엔 사용 X)
+python3 generate_maps.py
 ```
 
 원본 DEM(`final_heightmap.raw`, 7GB)은 `~/works/heightmap/`에 별도 보관. `tiles/`와 `boat.png`는 `vite.config.ts` middleware 가 레포 루트에서 직접 서빙하므로 **이동 금지** (Vite asset graph 밖 → hash rename·dist 복사 둘 다 회피).

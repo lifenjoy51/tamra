@@ -4,14 +4,25 @@
 // flapBurst() 는 돛 펼침 + RUN mode 에서 랜덤 간격 burst. uiBlip 은 UI 변경 시 짧은 sine AD.
 import { boat, sail, wind } from './state';
 
+// 기본 master 레벨. 음소거 해제 시 이 값 × prefs.masterScale 가 인가됨.
+const BASE_MASTER_GAIN = 0.3;
+
 export const audio: any = {
     ctx: null, master: null, muted: false,
     waves: null, wavesGain: null, wavesFilter: null,
     wind: null, windGain: null, windFilter: null,
     noiseBuffer: null,
+    // 사용자 튜닝 노브. 콘솔에서 window.__audioGain({master, wind, waves}) 로 조정.
+    prefs: { masterScale: 1.0, windScale: 1.0, wavesScale: 1.0 },
 };
 
 try { audio.muted = localStorage.getItem('tamra_muted') === '1'; } catch (e) {}
+try {
+    var saved = JSON.parse(localStorage.getItem('tamra_audio_prefs') || '{}');
+    if (typeof saved.masterScale === 'number') audio.prefs.masterScale = saved.masterScale;
+    if (typeof saved.windScale === 'number')   audio.prefs.windScale = saved.windScale;
+    if (typeof saved.wavesScale === 'number')  audio.prefs.wavesScale = saved.wavesScale;
+} catch (e) {}
 
 export function buildNoiseBuffer(ctx) {
     // ~4s white noise loop (pink-ish by lowpass on filter)
@@ -36,7 +47,7 @@ export function initAudio() {
     if (!AC) return;
     var ctx = new AC();
     var master = ctx.createGain();
-    master.gain.value = audio.muted ? 0 : 0.3;
+    master.gain.value = audio.muted ? 0 : BASE_MASTER_GAIN * audio.prefs.masterScale;
     master.connect(ctx.destination);
     audio.noiseBuffer = buildNoiseBuffer(ctx);
     // Waves loop
@@ -66,7 +77,25 @@ export function resumeAudio() {
 export function setMuted(m) {
     audio.muted = m;
     try { localStorage.setItem('tamra_muted', m ? '1' : '0'); } catch (e) {}
-    if (audio.master) audio.master.gain.setTargetAtTime(m ? 0 : 0.3, audio.ctx.currentTime, 0.05);
+    if (audio.master) {
+        var target = m ? 0 : BASE_MASTER_GAIN * audio.prefs.masterScale;
+        audio.master.gain.setTargetAtTime(target, audio.ctx.currentTime, 0.05);
+    }
+}
+
+// 콘솔에서 노브 조정. 인자 없이 호출하면 현재값 반환.
+// ex) __audioGain({master: 0.5, wind: 2, waves: 0.7})
+export function setAudioGain(opts) {
+    if (opts && typeof opts === 'object') {
+        if (typeof opts.master === 'number') audio.prefs.masterScale = opts.master;
+        if (typeof opts.wind === 'number')   audio.prefs.windScale = opts.wind;
+        if (typeof opts.waves === 'number')  audio.prefs.wavesScale = opts.waves;
+        try { localStorage.setItem('tamra_audio_prefs', JSON.stringify(audio.prefs)); } catch (e) {}
+        if (audio.master && !audio.muted) {
+            audio.master.gain.setTargetAtTime(BASE_MASTER_GAIN * audio.prefs.masterScale, audio.ctx.currentTime, 0.05);
+        }
+    }
+    return audio.prefs;
 }
 
 var lastFlapMs = -99999;
@@ -74,12 +103,12 @@ var lastFlapMs = -99999;
 export function updateAudio() {
     if (!audio.ctx) return;
     var t = audio.ctx.currentTime;
-    // 파도: wind 기반(풍파) + 기본값. gain 0~0.35
-    var wg = Math.min(0.35, (wind.speedMS / 25) + 0.05);
+    // 파도: wind 기반(풍파) + 기본값. gain 0~0.35 × prefs
+    var wg = Math.min(0.35, (wind.speedMS / 25) + 0.05) * audio.prefs.wavesScale;
     audio.wavesGain.gain.setTargetAtTime(wg, t, 0.3);
     audio.wavesFilter.frequency.setTargetAtTime(250 + wind.speedMS * 15, t, 0.3);
     // 바람 whistle: 풍속↑ → gain↑, 주파수↑
-    var wdg = Math.min(0.18, Math.max(0, (wind.speedMS - 4) / 40));
+    var wdg = Math.min(0.18, Math.max(0, (wind.speedMS - 4) / 40)) * audio.prefs.windScale;
     audio.windGain.gain.setTargetAtTime(wdg, t, 0.3);
     audio.windFilter.frequency.setTargetAtTime(400 + wind.speedMS * 30, t, 0.3);
     // 돛 펄럭임: 돛 올리고 + AoA가 RUN(180° 근처)일 때 burst

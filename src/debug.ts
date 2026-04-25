@@ -10,7 +10,7 @@ import {
 import { altitude, colormap } from './tiles';
 import { STARS, starState } from './astronomy/stars';
 import { PLANETS, planetState } from './astronomy/planets';
-import { audio } from './audio';
+import { audio, setAudioGain } from './audio';
 
 export function initDebugHooks() {
     var w = window as any;
@@ -35,6 +35,7 @@ export function initDebugHooks() {
     w.__colormap = colormap;
     // audio
     w.__audio = audio;
+    w.__audioGain = setAudioGain;
     // 시간 제어 (콘솔에서 시간 점프/속도 조작)
     w.__advanceHours = function (h) { timeRef.gameTime += 3600000 * h; };
     w.__setTimeSpeed = function (s) { timeRef.TIME_SPEED = s; };

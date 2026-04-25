@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """
+[Legacy] 제주 1024×1024 단일 윈도우 PNG 생성기.
+프로덕션 파이프라인은 generate_world_tiles.py (전세계 176×88 타일).
+이 스크립트는 타일 결과 검증(--verify) 비교용으로만 유지된다.
+
 jeju_hires_1024.raw (UInt16, 1024x1024) →
   jeju_hires_1024.png    (8-bit grayscale heightmap)
   jeju_colormap_1024.png (RGB colormap)

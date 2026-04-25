@@ -1,6 +1,7 @@
 // weather.ts — ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness/visibility/precipitation.
 // __cloudOverride / __precipOverride / __precipTypeOverride 디버그 hook 보존.
 import { weather, sun } from '../state';
+import { WEATHER_DIURNAL_PHASE_HOURS, WEATHER_DIURNAL_AMP } from '../config';
 
 export function computeWeather() {
     var lat = sun.lat;
@@ -18,7 +19,7 @@ export function computeWeather() {
     var n = ((seed * 2654435761) >>> 0) / 4294967295;
     base += (n - 0.5) * 0.4;
     // 일변화 (낮 대류 증가)
-    base += Math.sin((sun.hourLocal - 6) * Math.PI / 12) * 0.08;
+    base += Math.sin((sun.hourLocal - WEATHER_DIURNAL_PHASE_HOURS) * Math.PI / 12) * WEATHER_DIURNAL_AMP;
     if (base < 0) base = 0; else if (base > 1) base = 1;
     weather.cloudiness = base;
     weather.visibilityCoef = 1.0 - base * 0.5;

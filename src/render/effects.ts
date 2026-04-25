@@ -1,7 +1,12 @@
 // effects.ts — drawNearFog / drawPrecipitation / drawLightning.
 // 모두 buf32 을 직접 덮어쓰는 post-process. Render() 직후 호출 순서:
 // drawNearFog(저시정 veil) → drawPrecipitation(비/눈) → drawLightning(뇌전 flash).
-import { SCR_W, SCR_H } from '../config';
+import {
+    SCR_W, SCR_H,
+    PRECIP_DRIFT_COEFF, PRECIP_FALL_SNOW, PRECIP_FALL_RAIN,
+    FOG_VIS_THRESHOLD,
+    LIGHTNING_CLOUD_THRESHOLD, LIGHTNING_PROB_SLOPE, LIGHTNING_PROB_BASE,
+} from '../config';
 import { buf32 } from '../canvas';
 import { weather, wind, sun, camera, timeRef } from '../state';
 
@@ -26,8 +31,8 @@ export function drawPrecipitation() {
     // 바람 기반 경사: 풍속·풍향 일부 반영. 화면 상 x축 방향 성분만 쓰면 과함 → 완만히.
     // wind.angleRad: 0=북(바람이 북에서 불어옴). 동쪽 성분 = -sin(angleRad)*speed
     var windX = -Math.sin(wind.angleRad) * wind.speedMS;
-    var driftX = windX * 0.18;             // px/frame 근사
-    var fallY = isSnow ? 1.2 : 5.5;        // 눈은 느리게, 비는 빠르게
+    var driftX = windX * PRECIP_DRIFT_COEFF;
+    var fallY = isSnow ? PRECIP_FALL_SNOW : PRECIP_FALL_RAIN;
     var rainCol = 0xFFE0C89C;   // light blue-gray (BGR)
     var snowCol = 0xFFF0F0FF;
     for (var i = 0; i < active; i++) {
@@ -62,8 +67,8 @@ export function drawPrecipitation() {
 // Render()의 거리 fog와 별개로, 근거리까지 감소된 시정을 강화.
 export function drawNearFog() {
     var vis = weather.visibilityCoef;
-    if (vis >= 0.7) return;
-    var strength = (0.7 - vis) * 1.0;
+    if (vis >= FOG_VIS_THRESHOLD) return;
+    var strength = FOG_VIS_THRESHOLD - vis;
     if (strength > 0.5) strength = 0.5;
     // 안개 색: 주간 = 연회색, 야간 = 짙은 청색
     var fR, fG, fB;
@@ -86,11 +91,11 @@ export function drawNearFog() {
 // gameTime을 30초 bucket으로 나눠 hash → 확률 체크. flash 길이 ≤ 120ms (real time).
 var lightningLastRealMs = -99999;
 export function drawLightning() {
-    if (weather.cloudiness <= 0.85) return;
+    if (weather.cloudiness <= LIGHTNING_CLOUD_THRESHOLD) return;
     var bucket = (timeRef.gameTime / 30000) | 0;
     var h = ((bucket * 2654435761) >>> 0) / 4294967295;  // 0..1
-    // cloudiness 0.85~1.0 → 확률 0.05~0.25
-    var prob = (weather.cloudiness - 0.85) * 1.3 + 0.05;
+    // cloudiness LIGHTNING_CLOUD_THRESHOLD~1.0 → 확률 BASE~BASE+SLOPE*(1-THRESHOLD)
+    var prob = (weather.cloudiness - LIGHTNING_CLOUD_THRESHOLD) * LIGHTNING_PROB_SLOPE + LIGHTNING_PROB_BASE;
     var shouldFlash = h < prob;
     var nowMs = performance.now();
     if (shouldFlash && nowMs - lightningLastRealMs > 1500) {

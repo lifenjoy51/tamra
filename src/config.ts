@@ -29,3 +29,36 @@ export const DEG_PER_PIXEL = 360 / WORLD_W;      // = 360/90112 ≈ 3.995e-3 deg
 // 시간 가속 한계
 export const TIME_SPEED_MIN = 1;
 export const TIME_SPEED_MAX = 7200;
+
+// --- 렌더 (voxel.ts) ---
+// 한국 위도 기준 1 world unit = 400m → 곡률 계산
+export const RENDER_UNIT_M = 400;
+export const EARTH_RADIUS_M = 6371000;
+// drop_m(z) = z² * RENDER_CURVATURE_COEFF
+export const RENDER_CURVATURE_COEFF = (RENDER_UNIT_M * RENDER_UNIT_M) / (2 * EARTH_RADIUS_M);
+// projScale = (SCR_H * RENDER_PROJ_SCALE) / z — 세로 해상도 비례 수직 FOV
+export const RENDER_PROJ_SCALE = 0.0044;
+// z 루프 초기값 및 step당 증분
+export const RENDER_DELTAZ_INIT = 0.5;
+export const RENDER_DELTAZ_STEP = 0.005;
+// 파도 RGB 변조 배수 (sin 합 amp → 색 변조량)
+export const RENDER_WAVE_COLOR_GAIN = 7;
+
+// --- 효과 (effects.ts) ---
+// 강수 파티클 바람 드리프트 계수 (px/frame per m/s)
+export const PRECIP_DRIFT_COEFF = 0.18;
+// 강수 낙하 속도 (px/frame)
+export const PRECIP_FALL_SNOW = 1.2;
+export const PRECIP_FALL_RAIN = 5.5;
+// 안개 veil 시작 임계 (visibilityCoef 가 이 값 미만일 때 적용)
+export const FOG_VIS_THRESHOLD = 0.7;
+// 뇌전 트리거 cloudiness 임계
+export const LIGHTNING_CLOUD_THRESHOLD = 0.85;
+// 뇌전 확률: prob = (cloudiness - LIGHTNING_CLOUD_THRESHOLD) * SLOPE + BASE
+export const LIGHTNING_PROB_SLOPE = 1.3;
+export const LIGHTNING_PROB_BASE = 0.05;
+
+// --- 날씨 (weather.ts) ---
+// 일변화 (낮 대류) sine 위상 오프셋(시간) / 진폭
+export const WEATHER_DIURNAL_PHASE_HOURS = 6;
+export const WEATHER_DIURNAL_AMP = 0.08;
