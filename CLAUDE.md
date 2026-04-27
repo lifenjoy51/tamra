@@ -204,9 +204,9 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 - 이중 버퍼 패턴: `buf32` (Uint32Array) 쓰고 `imagedata.data.set(buf8)` + `putImageData`로 flip
 - **파도 sin 좌표는 카메라 상대값** (`wx = plx - camera.x`): 절대 월드좌표(73000+)에 작은 dx 곱하면 위상이 점프해 깜박임 발생
 
-## 커밋 prefix
+## 커밋 메시지
 
-이 저장소의 기존 커밋은 모두 `[JONES-89]` prefix 사용 중. 동일 형식 유지.
+prefix(`[JONES-XX]` 등) 사용하지 않음. 한국어 단문 + ` + ` 로 항목 나열하는 패턴 유지 (예: "시작화면 + 음소거 버튼 + 5세기 후반 시대 정렬").
 
 ## 알려진 주의점
 
