@@ -1,6 +1,6 @@
 # Tamra (탐라)
 
-9세기 이전 제주도 중심 고대 항해 체험 시뮬레이터.
+5세기 후반(476년 전후) 제주도 중심 고대 항해 체험 시뮬레이터. 탐라가 백제에 조공하며 동아시아 해상 네트워크에 공식 편입된 시점이 시대 앵커.
 
 > "지도 위의 점"이 아닌 "배 위의 사람" — 미니맵·좌표·고정 방위 없이 태양·별·바람·해류로만 방향을 판단한다.
 
@@ -76,6 +76,10 @@ npm run release:clean    # release/ 비우기
 
 - **[DESIGN.md](DESIGN.md)** — 설계 결정의 배경 ("왜 이렇게")
 - **[CLAUDE.md](CLAUDE.md)** — 작업용 빠른 참조 (LLM/엔지니어)
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — 향후 과제 우선순위 (게임 기획 관점)
+- **[docs/UI_PLAN.md](docs/UI_PLAN.md)** — 화면 UI 개선 계획 (디버그 분리 / 펜넌트 / 토스트 등)
+- **[docs/PERIOD_NOTES.md](docs/PERIOD_NOTES.md)** — 5세기 후반 동양 항해술 사실 정리 (시스템·시나리오 결정의 역사 근거)
+- **[docs/TRADE_NETWORK.md](docs/TRADE_NETWORK.md)** — 5세기 후반 해상 교역망과 항구 노드 (시나리오·`data/ports.json` 근거)
 - **[docs/PIPELINE.md](docs/PIPELINE.md)** — DEM → 전세계 타일 빌드 파이프라인
 - **[docs/DEPLOY.md](docs/DEPLOY.md)** — 배포 절차 (Caddy 서브패스, Oracle Cloud 기준)
 - **[docs/GLOSSARY.md](docs/GLOSSARY.md)** — 용어 사전 + 참고문헌 (항해·기상·천문·렌더)

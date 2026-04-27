@@ -43,6 +43,7 @@ import { initRudderUI, updateRudderUI } from './ui/rudder';
 import { initSailUI, updateSailUI } from './ui/sail';
 import { initToggleUI, updateToggleUI } from './ui/toggle';
 import { initDebugPanel } from './ui/debug-panel';
+import { showStartMenu } from './ui/start-menu';
 import { initDebugHooks } from './debug';
 
 (async function () {
@@ -64,6 +65,10 @@ try {
 }
 
 document.getElementById('loading').style.display = 'none';
+
+// 시작 메뉴 노출 — 사용자가 "항해 시작" 또는 아무 키를 누를 때까지 대기.
+await showStartMenu();
+
 canvas.style.display = 'block';
 var gameUiEl = document.getElementById('gameui');
 gameUiEl.style.display = 'block';

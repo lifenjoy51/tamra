@@ -1,11 +1,14 @@
-// toggle.ts — 우상단 아이콘 버튼.
+// toggle.ts — 우상단 + 우하단 아이콘 버튼.
 //   ★: 하늘보기 (uiFlags.skyMapOn) — K 키와 동기화.
+//   音: 음소거 토글 (audio.muted) — M 키와 동기화. localStorage 영속은 setMuted 가 처리.
 //   i: 디버그 패널 show/hide — localStorage 에 상태 저장(새로고침 후 복원).
 import { uiFlags } from '../state';
+import { audio, setMuted } from '../audio';
 
 const LS_KEY_DEBUG = 'tamra_debug_visible';
 
 let btnSky: HTMLButtonElement | null = null;
+let btnMute: HTMLButtonElement | null = null;
 let btnDebug: HTMLButtonElement | null = null;
 let debugEl: HTMLElement | null = null;
 
@@ -22,6 +25,7 @@ export function initToggleUI() {
     document.getElementById('toggle-ui')?.classList.add('ready');
     document.getElementById('sky-ui')?.classList.add('ready');
     btnSky = document.getElementById('btn-sky') as HTMLButtonElement | null;
+    btnMute = document.getElementById('btn-mute') as HTMLButtonElement | null;
     btnDebug = document.getElementById('btn-debug') as HTMLButtonElement | null;
     debugEl = document.getElementById('debug');
 
@@ -36,6 +40,12 @@ export function initToggleUI() {
             btnSky!.blur(); // 후속 Space/Enter 가 버튼 재발동하지 않도록 포커스 해제
         });
     }
+    if (btnMute) {
+        btnMute.addEventListener('click', () => {
+            setMuted(!audio.muted);
+            btnMute!.blur();
+        });
+    }
     if (btnDebug) {
         btnDebug.addEventListener('click', () => {
             uiFlags.debugVisible = !uiFlags.debugVisible;
@@ -46,8 +56,12 @@ export function initToggleUI() {
     }
 }
 
-// 매 프레임 — K 키로도 uiFlags.skyMapOn 변경 가능하므로 버튼 상태 반영.
+// 매 프레임 — K/M 키로도 상태가 변할 수 있으므로 버튼 .active 동기화.
 // 디버그 active 는 버튼 자체 클릭에서만 변하므로 applyDebug() 에서 갱신 → 여기선 불필요.
 export function updateToggleUI() {
     if (btnSky) btnSky.classList.toggle('active', uiFlags.skyMapOn);
+    if (btnMute) {
+        btnMute.classList.toggle('active', audio.muted);
+        btnMute.title = audio.muted ? '음소거 해제' : '음소거';
+    }
 }
