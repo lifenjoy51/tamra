@@ -81,6 +81,7 @@ npm run release:clean    # release/ 비우기
 - **[docs/PERIOD_NOTES.md](docs/PERIOD_NOTES.md)** — 5세기 후반 동양 항해술 사실 정리 (시스템·시나리오 결정의 역사 근거)
 - **[docs/TRADE_NETWORK.md](docs/TRADE_NETWORK.md)** — 5세기 후반 해상 교역망과 항구 노드 (시나리오·`data/ports.json` 근거)
 - **[docs/PIPELINE.md](docs/PIPELINE.md)** — DEM → 전세계 타일 빌드 파이프라인
+- **[docs/COASTLINE_REFINE.md](docs/COASTLINE_REFINE.md)** — 해상도 증가 없이 해안선을 정교화하는 방법(OSM 벡터·noise·SDF·coverage AA) 비교·우선순위
 - **[docs/DEPLOY.md](docs/DEPLOY.md)** — 배포 절차 (Caddy 서브패스, Oracle Cloud 기준)
 - **[docs/GLOSSARY.md](docs/GLOSSARY.md)** — 용어 사전 + 참고문헌 (항해·기상·천문·렌더)
 
