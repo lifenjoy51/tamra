@@ -84,7 +84,7 @@ export const timeRef = {
     // 랜덤 날짜(연중 임의) + UTC 정오 기준. 경도는 startGx 주입 후 태양 위치로 자동 보정됨.
     gameTime: Date.UTC(new Date().getUTCFullYear(), 0, 1 + ((Math.random() * 365) | 0), 3, 0, 0),
     // 시간 가속: 1초 실시간 = TIME_SPEED 초 게임시간. T/Y 키로 조절.
-    TIME_SPEED: 960,
+    TIME_SPEED: 120,
 };
 
 export const frameStats = {
