@@ -5,12 +5,14 @@
 // 메인 씬은 1 unit = 1 world px = 400m 라 15m 배가 0.04 unit 로 사실상 안 보인다.
 // 2D 스프라이트(boat-sprite.ts)와 같은 발상으로, 배는 미터 단위 전용 씬 + 전용 카메라(배 뒤·위)로
 // 메인 렌더 위에 depth 만 지우고 겹쳐 그린다. 카메라 pitch/FOV 가 메인과 같아 수평선 위치가 일치.
-// 조명은 메인 태양광/ambient 를 배 기준 좌표로 돌려 복사, 흘수선 아래는 clipping plane 으로 잘라
-// 물에 잠긴 것처럼 보이게 한다. 돛 높이(boat.sail)·활대 각(상대풍)·키(boat.rudder)·노(boat.row)·너울 반영.
+// 조명은 메인 태양광/ambient 를 배 기준 좌표로 돌려 복사. 배 주변은 실제 스케일 국소 바다(boat-water.ts)가
+// 덮어 잠긴 부분을 가리고, 흔들림도 그 수면을 샘플링한다. 돛 높이(boat.sail)·활대 각(상대풍)·키(boat.rudder)·
+// 노(boat.row) 반영 + 항적·뱃머리 물보라·노 물보라.
 import * as THREE from 'three';
-import { boat, wind, wave, sail as sailState } from '../state';
+import { boat, wind, wave, ship, sail as sailState } from '../state';
 import { SCR_W, SCR_H } from '../config';
 import type { CelestialRig } from './celestial';
+import { updateLocalSea, seaHeight, buildSeaPatch, updateSeaPatch, buildFoam, spawnFoam, updateFoam } from './boat-water';
 
 // 배 로컬 좌표: +X = 우현, +Y = 위, -Z = 선수 (three 카메라 기본 forward 와 같은 방향).
 const LEN = 13;            // 선체 길이(m)
@@ -26,7 +28,6 @@ const BOOM_Y = DECK_Y + 1.25;
 const SAIL_ROWS = 12;      // 거적 엮음 띠 수
 const ROWER_Z = [-3.2, -0.4, 2.4];
 
-const WAVE_AMP_TO_M = 0.25; // water.ts 와 같은 환산 (swell amp → m)
 
 const COL = {
     rim: 0x4a2e18, plankA: 0x8a5a32, plankB: 0x7d5230, log: 0x5b3a22, logDark: 0x4f321d,
@@ -39,29 +40,30 @@ const boatScene = new THREE.Scene();
 const boatCam = new THREE.PerspectiveCamera(70, SCR_W / SCR_H, 0.1, 300);
 const sunLight = new THREE.DirectionalLight(0xfff2d8, 1);
 const ambient = new THREE.AmbientLight(0x8899aa, 1);
-// 흘수선: 이 평면 아래(y < waterY)는 잘린다. constant 는 매 프레임 -heave 로 갱신.
-const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 const root = new THREE.Group();     // heave/roll/pitch 적용
+let seaPatch: THREE.Mesh;
 let sailRig: THREE.Group;           // 돛대 축 회전(활대 각)
 let sailMesh: THREE.Mesh;
 let yard: THREE.Mesh;
 let boom: THREE.Mesh;
 let steerOar: THREE.Group;
-interface Rower { oar: THREE.Group; torso: THREE.Group; phase: number; }
+interface Rower { oar: THREE.Group; torso: THREE.Group; phase: number; wasIn: boolean; }
 const rowers: Rower[] = [];
 let sailDisp = 0;                   // 화면상 돛 높이 비율 (boat.sail 로 부드럽게 수렴)
 let rowBlend = 0;                   // 0 = 노 걷어 올림, 1 = 젓는 중
 let rowPhase = 0;
 let built = false;
+let heaveS = 0, pitchS = 0, rollS = 0;  // 수면 샘플을 관성으로 따라가는 자세
 
 const _sunDir = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
+const _tip = new THREE.Vector3();
 
 function mat(hex: number, extra?: THREE.MeshStandardMaterialParameters) {
     return new THREE.MeshStandardMaterial(Object.assign({
         color: hex, flatShading: true, roughness: 0.9, metalness: 0,
-        side: THREE.DoubleSide, clippingPlanes: [waterPlane],
+        side: THREE.DoubleSide,
     }, extra));
 }
 function box(w: number, h: number, d: number, hex: number) {
@@ -205,7 +207,7 @@ function buildRowerSide(): THREE.Group {
         blade.position.x = 3.1;
         oar.add(shaft, blade);
         side.add(oar);
-        rowers.push({ oar, torso: person.torso, phase: i * 0.15 });
+        rowers.push({ oar, torso: person.torso, phase: i * 0.15, wasIn: false });
     }
     return side;
 }
@@ -239,12 +241,13 @@ function buildStays(): THREE.LineSegments {
     for (var i = 0; i < ends.length; i++) pts.push(top[0], top[1], top[2], ends[i][0], ends[i][1], ends[i][2]);
     var geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: COL.rope, clippingPlanes: [waterPlane] }));
+    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: COL.rope }));
 }
 
 function build() {
     built = true;
-    boatScene.add(sunLight, sunLight.target, ambient, root);
+    seaPatch = buildSeaPatch();
+    boatScene.add(sunLight, sunLight.target, ambient, root, seaPatch, buildFoam());
     root.rotation.order = 'YXZ';
 
     var hullGeoMesh = buildHull();
@@ -319,6 +322,52 @@ function updateRowers() {
         r.oar.rotation.y = -1.15 + (sweep + 1.15) * rowBlend;
         r.oar.rotation.z = 0.2 + (-drop - 0.2) * rowBlend;
         r.torso.rotation.x = 0.3 * Math.cos(p) * rowBlend;
+        // 노깃이 물에 들어가는 순간(catch) 물보라
+        var isIn = rowBlend > 0.5 && Math.sin(p) > 0;
+        if (isIn && !r.wasIn) {
+            r.oar.updateWorldMatrix(true, false);
+            _tip.set(3.3, 0, 0);
+            r.oar.localToWorld(_tip);   // 씬 좌표 = 파티클 좌표계
+            for (var k = 0; k < 4; k++) {
+                spawnFoam(_tip.x, seaHeight(_tip.x, _tip.z) + 0.05, _tip.z,
+                    (Math.random() - 0.5) * 1.2, 1.2 + Math.random() * 1.2, (Math.random() - 0.5) * 1.2, 0.9, false);
+            }
+        }
+        r.wasIn = isIn;
+    }
+}
+
+// 항적: 두 선체 뱃머리에서 Kelvin 각(~19.5°)으로 퍼지는 V + 선체 옆 거품 + 파도에 박힐 때 물보라.
+let bowPrev = [0, 0];
+function updateWake(v: number) {
+    var spread = v * 0.35;
+    var n = v > 0.15 ? Math.min(2, v * 0.35) : 0;
+    for (var h = 0; h < 2; h++) {
+        var hxs = h ? HULL_X : -HULL_X;
+        var bowZ = -LEN / 2 + 0.9;
+        var bowSea = seaHeight(hxs, bowZ);
+        for (var k = 0; k < n; k++) {
+            if (Math.random() > n - k) break;
+            var side = Math.random() < 0.5 ? -1 : 1;
+            spawnFoam(hxs + side * (HB * 0.6), bowSea, bowZ + Math.random() * 1.5,
+                side * spread * (0.7 + Math.random() * 0.6), 0, 0, 3 + Math.random() * 2.5, true);
+        }
+        // 선체 옆 흘수선 거품 (파도가 선체를 칠 때도 조금)
+        if (Math.random() < 0.25 + v * 0.3) {
+            var zs = -LEN / 2 + 2 + Math.random() * (LEN - 4), sd = Math.random() < 0.5 ? -1 : 1;
+            spawnFoam(hxs + sd * HB * 1.05, seaHeight(hxs + sd * HB, zs), zs, sd * 0.3, 0, 0, 1.5 + Math.random(), true);
+        }
+        // 뱃머리가 수면 대비 빠르게 내려가면(파도에 박힘) 물보라 — 속도·파고 비례
+        var rel = root.position.y - root.rotation.x * bowZ - bowSea;   // 뱃머리 높이 - 수면
+        var dig = bowPrev[h] - rel;
+        bowPrev[h] = rel;
+        if (dig > 0.02 && v > 0.8) {
+            var cnt = Math.min(10, (dig * 60 * v) | 0);
+            for (var q = 0; q < cnt; q++) {
+                spawnFoam(hxs + (Math.random() - 0.5) * HB, bowSea + 0.2, bowZ - 0.3,
+                    (Math.random() - 0.5) * 2.5, 2 + Math.random() * 2.5 * Math.min(1, v / 3), -v * 0.3, 1.2, false);
+            }
+        }
     }
 }
 
@@ -327,25 +376,30 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     if (!built) build();
     var t = wave.time;
 
-    // 너울: 2D DrawBoat 와 같은 위상식. heave(m) + 파향 성분별 pitch/roll + 바람 반대쪽 기울기(heel).
-    // 쌍동선이라 단동선보다 heel 이 작다.
-    var sw = wave.swell;
-    var phase = boat.gx * sw.dx + boat.gy * sw.dy + t * sw.speed;
-    var heave = Math.sin(phase) * sw.amp * WAVE_AMP_TO_M;
-    var slope = Math.cos(phase) * Math.min(1, sw.amp / 5);
-    var wl = Math.hypot(sw.dx, sw.dy) || 1;
-    var wdx = sw.dx / wl, wdy = sw.dy / wl;
-    var hx = -Math.sin(boat.angle), hy = -Math.cos(boat.angle);
-    var along = wdx * hx + wdy * hy, across = wdx * -hy + wdy * hx;
+    // 대수속력(돛+노)을 실시간 m/s 로 그대로 사용 — 물결·항적이 배 속도대로 뒤로 흐른다.
+    var v = ship.waterMS;
+    updateLocalSea(v);
+    // 흔들림: 선수/선미/좌우 선체 수면 높이 → heave·pitch·roll. 쌍동선은 수면을 거의 그대로 탄다.
+    // 관성 smoothing 으로 짧은 잔물결엔 덜 반응. 바람 반대쪽 기울기(heel)는 단동선보다 작게.
+    var zb = -LEN / 2 + 1.5, zs = LEN / 2 - 1.5;
+    var hb = (seaHeight(-HULL_X, zb) + seaHeight(HULL_X, zb)) / 2;
+    var hs = (seaHeight(-HULL_X, zs) + seaHeight(HULL_X, zs)) / 2;
+    var hp = (seaHeight(-HULL_X, zb) + seaHeight(-HULL_X, zs)) / 2;
+    var hr = (seaHeight(HULL_X, zb) + seaHeight(HULL_X, zs)) / 2;
     var rw = relWind();
-    var heel = (rw.s >= 0 ? 1 : -1) * 0.035 * sailDisp * Math.min(1.5, wind.speedMS / 8);
-    root.position.y = heave;
-    root.rotation.x = 0.05 * slope * along;
-    root.rotation.z = 0.05 * slope * across + heel;
-    waterPlane.constant = -heave;
+    var heel = (rw.s >= 0 ? 1 : -1) * 0.03 * sailDisp * Math.min(1.5, wind.speedMS / 8);
+    heaveS += ((hb + hs) / 2 - heaveS) * 0.35;
+    pitchS += (Math.atan2(hb - hs, zs - zb) - pitchS) * 0.3;
+    rollS  += (Math.atan2(hr - hp, 2 * HULL_X) - rollS) * 0.3;   // +z 회전 = 우현이 올라감
+    root.position.y = heaveS;
+    root.rotation.x = pitchS;
+    root.rotation.z = rollS + heel;
 
     updateSail(t, rw);
     updateRowers();
+    updateWake(v);
+    updateFoam(v);
+    updateSeaPatch(seaPatch);
     steerOar.rotation.y += (-boat.rudder * 0.5 - steerOar.rotation.y) * 0.2;
 
     // 메인 씬 조명을 배 좌표계(선수 = -Z)로 회전해 복사
@@ -359,7 +413,6 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
 
     var prevAuto = renderer.autoClear;
     renderer.autoClear = false;
-    renderer.localClippingEnabled = true;
     renderer.clearDepth();
     renderer.render(boatScene, boatCam);
     renderer.autoClear = prevAuto;
