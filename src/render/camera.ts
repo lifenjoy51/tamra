@@ -68,7 +68,7 @@ export function UpdateCamera() {
         //   목표 yaw = rudder × sailMS × POWER (rad / game-sec). sailMS 는 돛 추진력 — 해류
         //   drift 는 물과 함께 움직이므로 러더 효과에 기여 안 함.
         //   yawRate 는 τ=RUDDER_TAU 로 목표에 지수 감쇠 수렴 — 키 꺾어도 즉시 회전 점프 안 함.
-        //   rudder=+1(우) → yaw > 0 → angle 감소 (convention: 0=북, π/2=동, 증가=반시계).
+        //   rudder=+1(우) → yaw > 0 → angle 감소 (convention: 0=북, π/2=서, 증가=반시계 — 우현 선회 = 감소).
         var targetYaw = boat.rudder * ship.sailMS * RUDDER_POWER;
         var decay = Math.exp(-gameDt / RUDDER_TAU);
         boat.yawRate = targetYaw + (boat.yawRate - targetYaw) * decay;

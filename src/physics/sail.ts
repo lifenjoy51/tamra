@@ -1,11 +1,18 @@
 // sail.ts — 돛 polar + AoA 모드 + 선체 ground velocity 합성
 import { boat, wind, sail, current, ship, BASE_SAIL_SPEED } from '../state';
 
-// polar curve (heading 기반) — 디버그/분석 용도로 export
-export function polarFor(headingRad: number): number {
-    var rel = headingRad - wind.angleRad;
+// 선수와 바람이 불어오는 방향 사이 각 (0 = 맞바람, π = 순풍).
+// boat.angle 은 반시계 증가(π/2 = 서, moveBoat 전진 = (-sin, -cos)), wind.angleRad 는 나침반 방위
+// (시계 증가, π/2 = 동) → 선수 방위 = -boat.angle. 두 규약을 그대로 빼면 남북 외 침로에서 판정이 뒤집힌다.
+function windAoA(boatAngle: number): number {
+    var rel = -boatAngle - wind.angleRad;
     rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    var aoa = Math.abs(rel);
+    return Math.abs(rel);
+}
+
+// polar curve (boat.angle 규약 heading) — 디버그/분석 용도로 export
+export function polarFor(headingRad: number): number {
+    var aoa = windAoA(headingRad);
     if (aoa < Math.PI / 6)        return 0.05;  // IRONS
     else if (aoa < Math.PI / 3)   return 0.55;  // CLOSE
     else if (aoa < 2 * Math.PI / 3) return 1.00;  // BEAM
@@ -15,9 +22,7 @@ export function polarFor(headingRad: number): number {
 
 // boat.angle vs wind.angleRad 의 AoA → polar·mode·windFactor 업데이트
 export function computeSail() {
-    var rel = boat.angle - wind.angleRad;
-    rel = ((rel + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    var aoa = Math.abs(rel);
+    var aoa = windAoA(boat.angle);
     if      (aoa < Math.PI / 6)     { sail.polar = 0.05; sail.mode = 'IRONS'; }
     else if (aoa < Math.PI / 3)     { sail.polar = 0.55; sail.mode = 'CLOSE'; }
     else if (aoa < 2 * Math.PI / 3) { sail.polar = 1.00; sail.mode = 'BEAM';  }
