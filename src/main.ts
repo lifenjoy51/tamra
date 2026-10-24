@@ -121,7 +121,8 @@ function UpdateDebug() {
         'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
         'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
         'Sail:    ' + (boat.sail === 0 ? 'DOWN' : boat.sail === 0.5 ? 'HALF' : 'FULL') + ' ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')' + (boat.row ? ' +ROW' : '') + '\n' +
-        'Ship:    ' + (ship.groundMS * 3.6).toFixed(1) + ' km/h / ' + (((ship.groundDirRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '°\n' +
+        'Ship:    ' + (ship.groundMS * 3.6).toFixed(1) + ' km/h / ' + (((ship.groundDirRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '°' +
+            (ship.moveScale < timeRef.TIME_SPEED - 0.5 ? '  move×' + ship.moveScale.toFixed(ship.moveScale < 10 ? 1 : 0) + ' (해안 ' + (ship.nearLandM | 0) + 'm)' : '') + '\n' +
         'Tile:    ' + tx + ',' + ty + '  (' + (boat.gx | 0) + ',' + (boat.gy | 0) + ')\n' +
         'LatLon:  ' + latStr + ', ' + lonStr + '\n' +
         'FPS:     ' + frameStats.fpsCurrent + ' / ' + frameStats.frameTimeEma.toFixed(2) + 'ms';

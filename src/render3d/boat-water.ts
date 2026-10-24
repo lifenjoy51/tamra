@@ -5,7 +5,9 @@
 //
 // 시간은 게임 배속과 무관한 실시간(프레임당 FRAME_DT) — 120배속으로 물결/항적이 흐르면 알아볼 수 없다.
 import * as THREE from 'three';
-import { boat, wave } from '../state';
+import { boat, wave, ship } from '../state';
+import { terrainHeightM } from '../coast';
+import { RENDER_UNIT_M } from '../config';
 
 export const FRAME_DT = 0.05;          // 20fps cap 기준 실시간 초
 const G = 9.81;
@@ -92,13 +94,35 @@ export function buildSeaPatch(): THREE.Mesh {
     return mesh;
 }
 
+// 배 좌표 (x=우현, z=선미, m) 위치의 지형 높이(m). 바다는 SEA_FLOOR(-5) 근처, 해안선 0.
+export function terrainAtBoat(x: number, z: number): number {
+    return terrainHeightM(boat.gx + (x * cosA + z * sinA) / RENDER_UNIT_M,
+                          boat.gy + (-x * sinA + z * cosA) / RENDER_UNIT_M);
+}
+
+// 해안이 이 거리(m) 안이면 패치·파티클을 지형으로 가린다. 이 씬은 메인 렌더 위에 깊이 없이 겹치므로
+// 그대로 두면 국소 바다가 해변·절벽 위에 칠해진다.
+const LAND_MASK_M = 70;
+let masked = false;
+
 export function updateSeaPatch(mesh: THREE.Mesh) {
     var pos = mesh.geometry.attributes.position as THREE.BufferAttribute;
-    var arr = pos.array as Float32Array;
+    var col = mesh.geometry.attributes.color as THREE.BufferAttribute;
+    var arr = pos.array as Float32Array, carr = col.array as Float32Array;
+    var mask = ship.nearLandM < LAND_MASK_M;
     for (var i = 0; i < pos.count; i++) {
         if (alphaOf[i] <= 0) continue;   // 완전 투명 테두리는 갱신 생략
-        arr[i * 3 + 1] = seaHeight(arr[i * 3], arr[i * 3 + 2]);
+        var x = arr[i * 3], z = arr[i * 3 + 2];
+        arr[i * 3 + 1] = seaHeight(x, z);
+        if (mask) {
+            // 수심 1.2m 보다 얕으면(해안선 쪽) 녹여 없앤다
+            var f = (-terrainAtBoat(x, z) - 0.2) / 1.0;
+            f = f < 0 ? 0 : f > 1 ? 1 : f;
+            carr[i * 4 + 3] = alphaOf[i] * f;
+        } else if (masked) carr[i * 4 + 3] = alphaOf[i];
     }
+    if (mask || masked) col.needsUpdate = true;
+    masked = mask;
     pos.needsUpdate = true;
 }
 
@@ -152,6 +176,8 @@ export function updateFoam(speedMS: number) {
             var sea = seaHeight(pPos[j], pPos[j + 2]);
             if (pPos[j + 1] < sea) { pWater[i] = 1; pVel[j + 1] = 0; } // 떨어진 물보라는 거품이 된다
         }
+        // 해안에 닿은 거품·물보라는 사라진다 (지형 위에 떠 보이지 않게)
+        if (ship.nearLandM < LAND_MASK_M && terrainAtBoat(pPos[j], pPos[j + 2]) > -0.3) { pLife[i] = 0; pCol[i * 4 + 3] = 0; continue; }
         var a = pLife[i] / pMax[i];
         pCol[i * 4] = pCol[i * 4 + 1] = pCol[i * 4 + 2] = 0.95;
         pCol[i * 4 + 3] = a * (pWater[i] ? 0.55 : 0.85);

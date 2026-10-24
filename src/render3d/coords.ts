@@ -5,15 +5,34 @@
 import * as THREE from 'three';
 import { RENDER_UNIT_M } from '../config';
 import { camera as gcam, boat, BASE_CAM_METERS } from '../state';
+import { terrainHeightM } from '../coast';
 
 // 2D voxel 렌더러는 곡률 계산 때문에 눈높이를 50m(BASE_CAM_METERS)로 고정해 쓰는데,
 // 3D 시점 높이의 기준 — 선미 갑판(수면 위 ~1.1m)에 선 키잡이 눈높이.
 export const EYE_HEIGHT_M = 2.6;
 // 3인칭 추적 시점: 키잡이 자리에서 뒤·위로 물러나 배 전체(선수~선미, 돛대 끝)를 한 화면에 담는다.
-// 메인 카메라도 같은 높이·pitch 를 써야 두 씬의 수평선이 일치한다 (뒤로 16m 는 메인 스케일에선 무시 가능).
+// 메인 카메라도 같은 위치·높이·pitch 를 써야 두 씬의 수평선·시차가 일치한다.
 export const CHASE_BACK_M = 16;
 export const CHASE_UP_M = 5;
 export const VIEW_HEIGHT_M = EYE_HEIGHT_M + CHASE_UP_M;
+// 배 중심 → 카메라 거리 = 선미 갑판(boat3d HELM_Z 4.4m) + CHASE_BACK_M. 메인 카메라도 같은 자리에 둬야
+// 해안 수십 m 앞에서 배·지형 시차가 맞는다.
+const CHASE_Z_M = 4.4 + CHASE_BACK_M;
+const CHASE_MIN_M = 6;
+// 현재 추적 거리(m). 카메라 뒤쪽이 육지면 배 쪽으로 당긴다 (절벽 속으로 들어가 화면이 지형 내부가 되는 것 방지).
+export const chase = { back: CHASE_Z_M };
+
+function updateChase() {
+    var sx = Math.sin(boat.angle), sy = Math.cos(boat.angle);   // 선미 방향 (월드 동·남)
+    var target = CHASE_Z_M;
+    for (var d = CHASE_MIN_M; d <= CHASE_Z_M + 3; d += 2) {
+        if (terrainHeightM(boat.gx + sx * d / RENDER_UNIT_M, boat.gy + sy * d / RENDER_UNIT_M) > -1) {
+            target = Math.max(CHASE_MIN_M, d - 4);
+            break;
+        }
+    }
+    chase.back += (target - chase.back) * (target < chase.back ? 0.5 : 0.08);
+}
 export const CAM_PITCH = -0.12;   // 시선 아래 (≈ -7°) — 뒤·위에서 배를 내려다본다
 
 // 수직 과장 배수. 1 = 실제. (과거 6 — 산이 6배로 솟아 실제 원근감과 어긋났다)
@@ -65,7 +84,9 @@ export function boatAngleToSceneRotY(angle: number): number {
 
 // camera.x/y/angle/heightMeters (state.ts, world 단위) → three PerspectiveCamera 에 적용
 export function applyCameraToThree(cam: THREE.PerspectiveCamera) {
-    var p = worldToScene(gcam.x, gcam.y);
+    updateChase();
+    var back = chase.back / RENDER_UNIT_M;
+    var p = worldToScene(gcam.x + Math.sin(gcam.angle) * back, gcam.y + Math.cos(gcam.angle) * back);
     cam.position.x = p.x;
     cam.position.z = p.z;
     // gcam.heightMeters = max(BASE_CAM_METERS, 지형고도+여유) — baseline 을 낮은 값으로 치환하되

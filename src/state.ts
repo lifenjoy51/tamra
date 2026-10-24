@@ -14,7 +14,8 @@
 // row: 노 젓기 0/1 (R 키 / 櫓 버튼). 바람과 무관하게 ROW_SPEED 추진 — 무풍·역풍 탈출용.
 export const boat = { gx: 0, gy: 0, angle: Math.PI, sail: 0, rudder: 0, yawRate: 0, row: 0 };
 // ship 속도 상태: sail/row 추진, water(대수속력 = sail + row, 러더 효과 기준), ground(해류 합성), heading
-export const ship = { sailMS: 0, rowMS: 0, waterMS: 0, groundMS: 0, groundDirRad: 0 };
+// moveScale: 이동에 쓰는 시간 배속 (해안 근처에선 TIME_SPEED 보다 낮아짐), nearLandM: 가장 가까운 육지까지(m)
+export const ship = { sailMS: 0, rowMS: 0, waterMS: 0, groundMS: 0, groundDirRad: 0, moveScale: 1, nearLandM: 1e9 };
 
 // --- Camera (3인칭: 배 뒤에서 추적) ---
 // camera.x, camera.y 는 글로벌 월드 좌표 (렌더 루프에서 & MASK 로 버퍼 위치 매핑)

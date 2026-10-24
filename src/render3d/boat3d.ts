@@ -13,7 +13,7 @@ import { boat, wind, wave, ship, sun, sail as sailState } from '../state';
 import { oarSplash } from '../audio';
 import { SCR_W, SCR_H } from '../config';
 import { FOV_V } from './renderer';
-import { VIEW_HEIGHT_M, CHASE_BACK_M, CAM_PITCH } from './coords';
+import { VIEW_HEIGHT_M, CAM_PITCH, chase } from './coords';
 import type { CelestialRig } from './celestial';
 import { buildWeather3D, updateWeather3D } from './weather3d';
 import { fogStrength } from './sky3d';
@@ -31,7 +31,6 @@ const SAIL_H = 6.0;        // 완전히 올렸을 때 돛 높이
 const SAIL_FURL_H = 0.35;  // 내렸을 때 활대-하활 간격(접어 묶은 거적 두께)
 const SAIL_PANELS = 5;     // 가로 활대로 나뉜 칸 수 (boat.png 와 같음)
 const BOOM_Y = DECK_Y + 1.6;       // 하활 — 난간 위
-const HELM_Z = 4.4;                // 선미 갑판 (키 손잡이 받침·추적 카메라 기준점)
 const BITT_Z = LEN / 2 - 1.5;      // 키 손잡이 받침 기둥
 const ROWER_Z = [-2.2, 1.0];
 
@@ -328,7 +327,7 @@ function build() {
     root.add(starboard, port, buildSteering(), buildLantern());
 
     // 선미 뒤·위 추적 시점. 높이는 매 프레임 heave 를 따라간다(평행이동만 — 수평선은 안 움직임).
-    boatCam.position.set(0, VIEW_HEIGHT_M, HELM_Z + CHASE_BACK_M);
+    boatCam.position.set(0, VIEW_HEIGHT_M, chase.back);
     boatCam.rotation.set(CAM_PITCH, 0, 0);
 }
 
@@ -462,6 +461,7 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     rollS  += (Math.atan2(hr - hp, 2 * ROLL_X) - rollS) * 0.3;   // +z 회전 = 우현이 올라감
     root.position.y = heaveS;
     boatCam.position.y = VIEW_HEIGHT_M + heaveS;
+    boatCam.position.z = chase.back;   // 메인 카메라와 같은 추적 거리 (coords.ts applyCameraToThree 에서 갱신)
     root.rotation.x = pitchS;
     root.rotation.z = rollS + heel;
 

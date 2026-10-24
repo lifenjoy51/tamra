@@ -8,7 +8,7 @@ import {
     BASE_CAM_METERS, CAM_HEIGHT_MARGIN, RUDDER_POWER, RUDDER_TAU,
 } from '../state';
 import { ensureTilesLoaded } from '../tiles';
-import { coastL, terrainHeightM } from '../coast';
+import { coastL, terrainHeightM, nearLandM } from '../coast';
 import { computeWind } from '../physics/wind';
 import { computeSail, updateShipSpeed } from '../physics/sail';
 import { computeCurrent } from '../physics/current';
@@ -21,6 +21,10 @@ import { updateStars } from '../astronomy/stars';
 // (선체 반 길이 6.5m + 여유).
 const SHORE_L = 0.1;
 const GRAD_EPS = 0.01;   // 해안 법선 차분 간격 (셀, 4m)
+// 해안 근처 이동 배속: k = 육지까지 거리 / NEAR_REF_M (1 ~ TIME_SPEED). 가까운 해안의 각속도(시차)를
+// 실제 항해 수준으로 묶는다 — 120배속 그대로면 20m 옆 절벽이 초속 수백 m 로 스쳐 지나가고,
+// 배 주변 물결·항적(실시간 속도)과 어긋난다. 먼바다(6km+)는 그대로 TIME_SPEED.
+const NEAR_REF_M = 40;
 
 function shoreBlocked(nx: number, ny: number): boolean {
     return coastL(nx, ny) > -SHORE_L;
@@ -46,7 +50,8 @@ export function moveBoat(dx, dy): number {
             gx /= gl; gy /= gl;
             var into = ax * gx + ay * gy;
             if (into > 0) { ax -= into * gx; ay -= into * gy; }
-            if (Math.hypot(ax, ay) < 1e-6) break;
+            // 거의 정면이면 미끄러지지 않고 멈춘다 (작은 접선 이동 ↔ 해류 되밀림이 번갈아 떨리던 문제)
+            if (Math.hypot(ax, ay) < 0.25 * Math.hypot(sx, sy)) break;
             // 볼록한 해안에선 접선으로 가도 L 이 살짝 오른다 — 넘친 만큼 바다 쪽으로 되밀기
             var over = coastL(boat.gx + ax, boat.gy + ay) + SHORE_L;
             if (over > 0) {
@@ -100,14 +105,19 @@ export function UpdateCamera() {
         boat.yawRate = targetYaw + (boat.yawRate - targetYaw) * decay;
         boat.angle -= boat.yawRate * gameDt;
         var gx0 = boat.gx, gy0 = boat.gy;
+        ship.nearLandM = nearLandM(boat.gx, boat.gy);
+        var kTarget = Math.max(1, Math.min(timeRef.TIME_SPEED, ship.nearLandM / NEAR_REF_M));
+        // 가까워질 땐 즉시, 멀어질 땐 서서히 (해안을 벗어나자마자 튀어나가지 않게)
+        ship.moveScale = kTarget < ship.moveScale ? kTarget : ship.moveScale + (kTarget - ship.moveScale) * 0.1;
+        var moveDt = uiFlags.skyMapOn ? 0 : (dtMs * ship.moveScale) / 1000;
         if (ship.waterMS > 0.01) {
-            var sU = ship.waterMS * gameDt / 400;
+            var sU = ship.waterMS * moveDt / 400;
             // 해안에 막혀 못 나아간 만큼 대수속력도 줄인다 — 멈춘 배에서 항적·물결이 계속 흐르지 않게.
             // (러더 yaw 는 위에서 막히기 전 속력으로 이미 계산 → 막혀도 뱃머리를 돌려 빠져나올 수 있다)
             ship.waterMS *= moveBoat(-Math.sin(boat.angle) * sU, -Math.cos(boat.angle) * sU);
         }
         if (current.speedMS > 0.01) {
-            var cU = current.speedMS * gameDt / 400;
+            var cU = current.speedMS * moveDt / 400;
             moveBoat(
                  Math.sin(current.angleRad) * cU,
                 -Math.cos(current.angleRad) * cU
@@ -116,7 +126,7 @@ export function UpdateCamera() {
         // 대지속력 = 실제 이동량 (해안 미끄러짐·정지 반영)
         var mdx = boat.gx - gx0, mdy = boat.gy - gy0;
         if (mdx > WORLD_W / 2) mdx -= WORLD_W; else if (mdx < -WORLD_W / 2) mdx += WORLD_W;
-        ship.groundMS = Math.hypot(mdx, mdy) * 400 / gameDt;
+        ship.groundMS = moveDt > 0 ? Math.hypot(mdx, mdy) * 400 / moveDt : 0;
         if (ship.groundMS > 1e-4) {
             ship.groundDirRad = Math.atan2(mdx, -mdy);
             if (ship.groundDirRad < 0) ship.groundDirRad += 2 * Math.PI;

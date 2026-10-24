@@ -76,7 +76,7 @@ python3 generate_maps.py
 | `render3d/{renderer,coords,terrain-mesh,sky3d,celestial}.ts` | 씬/카메라, 월드↔씬 좌표(1 unit = 1 world px, 높이 ×V_EXAG), 지형 청크(원경 4px·배 근처 ~16km 1px LOD + 해안 셀 25m 분할 절벽, 원경과 맞닿은 변만 보간 이음), 스카이돔·안개, 태양/달 조명 |
 | `render3d/water.ts` | 메인 바다 (너울+교차 너울, 지평선 반사, 태양 반짝임 — 정점색) |
 | `render3d/boat3d.ts` | 단동 목선 뷰모델 (`boat.png` 형태 — 넓은 둥근 선체·5칸 활대 거적돛·선미 중앙 키) — 미터 단위 전용 씬·추적 카메라로 메인 렌더 위에 겹침 (노꾼은 노 저을 때만·등불) |
-| `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클 |
+| `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클. 뷰모델 씬은 깊이 없이 겹치므로 해안 70m 안에선 지형 위 패치를 녹이고 파티클을 지운다 |
 | `render3d/weather3d.ts` | 뷰모델 씬 비/눈 3D 파티클 |
 | `input.ts` | initInput + inputState.{rotStep, moveStep} |
 | `audio.ts` | Web Audio 절차생성 (audio 싱글톤, initAudio/resumeAudio/setMuted/updateAudio/flapBurst/uiBlip) |
@@ -121,6 +121,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 - **해류 drift**: 돛+노 추진 벡터 + 해류 벡터 = `ship.groundMS` / `ship.groundDirRad`
 - **해안 충돌** ([src/coast.ts](src/coast.ts)): 셀 꼭짓점 육지/바다 bilinear `coastL` 의 0 등고선이 해안선. `coastL < -0.1`(해안에서 ~20m) 이어야 항해 가능 — 해안 바로 앞까지 접근. 막히면 ∇L 성분을 뺀 접선으로 미끄러짐(볼록 해안은 바다 쪽 되밀기, 오목한 구석·정면이면 정지). `moveBoat` 가 전진 비율을 돌려줘 `ship.waterMS` 를 깎고, `ship.groundMS/groundDirRad` 는 실제 이동량으로 재계산
 - **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*40)` (≤10m) — 큰 step에서도 해안 통과 방지, 근접 정지 오차 최소화
+- **해안 근처 이동 배속** (`ship.moveScale`): 이동만 `k = clamp(육지까지 거리 / 40m, 1, TIME_SPEED)` 배속 (`coast.ts` `nearLandM`, 6.4km 격자 탐색). 가까운 해안의 시차를 실제 항해 수준으로 — 120배속 그대로면 20m 옆 절벽이 초속 수백 m 로 지나가고 배 주변 물결(실시간)과 어긋난다. 선회(yaw)·천체 시계는 TIME_SPEED 그대로. 디버그 Ship 줄에 `move×k (해안 Nm)`
 - **카메라 = 배에 snap**: smoothing/spring-arm 제거. `camera.x/y/angle = boat.*` 직접 대입
 - **카메라 높이**: 기본 `50m`, 지형 위에서 `지형높이 + 20m`로 자동 상승
 
@@ -194,7 +195,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 | `FRAME_INTERVAL` | 50 | 20fps cap |
 | `BASE_SAIL_SPEED` | 4 m/s | 돛 100% + windFactor 1 기준 |
 | `timeRef.TIME_SPEED` | 120 (초기) | 시간 가속 (T/Y로 1~7200) |
-| `VIEW_HEIGHT_M` (render3d/coords) | 7.6 m | 3D 추적 시점 높이 = 키잡이 눈높이 2.6m + `CHASE_UP_M` 5m, 선미 뒤 `CHASE_BACK_M` 16m (메인·배 카메라 공유 → 수평선 일치) |
+| `VIEW_HEIGHT_M` (render3d/coords) | 7.6 m | 3D 추적 시점 높이 = 키잡이 눈높이 2.6m + `CHASE_UP_M` 5m, 배 중심 뒤 `chase.back`(기본 20.4m, 뒤가 육지면 당김) — 메인·배 카메라가 같은 위치를 써서 수평선·근거리 시차 일치 |
 | `FOV_V` (render3d/renderer) | 50° | 3D 세로 시야각 (16:9 가로 ≈ 80°) |
 | `V_EXAG` (render3d/coords) | 1 | 3D 높이 과장 없음 + `applyCurvature` 지구 곡률 (수평선 ~5.8km) |
 

@@ -72,3 +72,22 @@ export function terrainHeightM(gx: number, gy: number): number {
     var cliff = Math.min(baseM, CLIFF_MAX_M);
     return cliff * ss(dM / w) + (baseM - cliff) * ss(dM / RISE_W_M);
 }
+
+// 가장 가까운 육지(해안선)까지 거리(m). 해안 셀 안이면 부호 거리, 아니면 반경 NEAR_SCAN 셀 격자 탐색
+// (육지 샘플점까지 거리 - 반 셀 ≈ 해안선 — 바다·육지 샘플 사이 중간). 그 너머는 NEAR_SCAN 셀 거리로 포화.
+const NEAR_SCAN = 16;   // 6.4km
+export function nearLandM(gx: number, gy: number): number {
+    sample(gx, gy);
+    if (dM > -FAR && dM < FAR) return Math.max(0, -dM);
+    var x0 = Math.floor(gx), y0 = Math.floor(gy), best = NEAR_SCAN * NEAR_SCAN;
+    for (var dy = -NEAR_SCAN; dy <= NEAR_SCAN; dy++) {
+        var ry = y0 + dy - gy, ry2 = ry * ry;   // 고도 샘플은 정수 좌표(셀 꼭짓점)
+        if (ry2 >= best) continue;
+        for (var dx = -NEAR_SCAN; dx <= NEAR_SCAN; dx++) {
+            if (altAt(x0 + dx, y0 + dy) <= SEA) continue;
+            var rx = x0 + dx - gx, d2 = rx * rx + ry2;
+            if (d2 < best) best = d2;
+        }
+    }
+    return Math.max(0, Math.sqrt(best) - 0.5) * RENDER_UNIT_M;
+}
