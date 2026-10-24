@@ -15,9 +15,13 @@ export const MM_SIZE = 108;
 // 고도 기반 색상 팔레트. 임계값/색을 한 곳에서 조정.
 // SEA: depth(=SEA-alt) 기준 오름차순. LAND: alt-SEA 기준 오름차순. 마지막은 catch-all.
 const MM_SEA_THRESH  = [20, 1e9];
-const MM_SEA_COLOR   = ['#3c8c20', '#18285a']; // #AABBGGRR(0xFF..) 대신 CSS hex(RRGGBB) 사용
+const MM_SEA_COLOR   = ['#203c8c', '#18285a']; // #AABBGGRR(0xFF..) 대신 CSS hex(RRGGBB) 사용
 const MM_LAND_THRESH = [20, 60, 120, 1e9];
 const MM_LAND_COLOR  = ['#40683a', '#705a3c', '#a07848', '#b0b0b0'];
+// 픽셀 루프용 [r,g,b] — 매 프레임 픽셀마다 hex 파싱하지 않도록 미리 변환
+const rgb = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+const MM_SEA_RGB  = MM_SEA_COLOR.map(rgb);
+const MM_LAND_RGB = MM_LAND_COLOR.map(rgb);
 const MM_BORDER_COLOR = '#c8c8c8';
 const MM_GRID_COLOR   = '#808080';
 const MM_BOAT_COLOR   = '#ff0000';
@@ -70,16 +74,15 @@ export function DrawMinimap() {
             var wx = (boat.gx + (mx - half) * STRIDE) | 0;
             var off = ((wy & MASK) << SHIFT) + (wx & MASK);
             var alt = altitude[off];
-            var thresh, colorHex, key;
-            if (alt <= SEA) { thresh = MM_SEA_THRESH;  colorHex = MM_SEA_COLOR;  key = SEA - alt; }
-            else            { thresh = MM_LAND_THRESH; colorHex = MM_LAND_COLOR; key = alt - SEA; }
-            var hex = colorHex[colorHex.length - 1];
+            var thresh, colors, key;
+            if (alt <= SEA) { thresh = MM_SEA_THRESH;  colors = MM_SEA_RGB;  key = SEA - alt; }
+            else            { thresh = MM_LAND_THRESH; colors = MM_LAND_RGB; key = alt - SEA; }
+            var c = colors[colors.length - 1];
             for (var pi = 0; pi < thresh.length; pi++) {
-                if (key < thresh[pi]) { hex = colorHex[pi]; break; }
+                if (key < thresh[pi]) { c = colors[pi]; break; }
             }
-            var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
             var di = (my * MM_SIZE + mx) * 4;
-            data[di] = r; data[di + 1] = g; data[di + 2] = b; data[di + 3] = 255;
+            data[di] = c[0]; data[di + 1] = c[1]; data[di + 2] = c[2]; data[di + 3] = 255;
         }
     }
     mctx.putImageData(imgData, 0, 0);
