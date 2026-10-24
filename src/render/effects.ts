@@ -89,9 +89,10 @@ export function drawNearFog() {
 // --- Lightning flash (뇌전) ---
 // cloudiness > 0.85 일 때 결정적 gate 로 드문드문 플래시.
 // gameTime을 30초 bucket으로 나눠 hash → 확률 체크. flash 길이 ≤ 120ms (real time).
+// lightningStrength() 는 2D(drawLightning)·3D(render3d 조명/하늘) 공용 — 같은 프레임 여러 번 불러도 안전.
 var lightningLastRealMs = -99999;
-export function drawLightning() {
-    if (weather.cloudiness <= LIGHTNING_CLOUD_THRESHOLD) return;
+export function lightningStrength(): number {
+    if (weather.cloudiness <= LIGHTNING_CLOUD_THRESHOLD) return 0;
     var bucket = (timeRef.gameTime / 30000) | 0;
     var h = ((bucket * 2654435761) >>> 0) / 4294967295;  // 0..1
     // cloudiness LIGHTNING_CLOUD_THRESHOLD~1.0 → 확률 BASE~BASE+SLOPE*(1-THRESHOLD)
@@ -102,9 +103,14 @@ export function drawLightning() {
         lightningLastRealMs = nowMs;
     }
     var elapsed = nowMs - lightningLastRealMs;
-    if (elapsed > 120) return;
+    if (elapsed > 120) return 0;
     // 플래시 강도: 0~50ms 강, 50~120ms 감쇠
     var strength = elapsed < 50 ? (0.55 - elapsed / 50 * 0.25) : (0.3 * (1 - (elapsed - 50) / 70));
+    return strength > 0 ? strength : 0;
+}
+
+export function drawLightning() {
+    var strength = lightningStrength();
     if (strength <= 0) return;
     var horizonY = (camera && camera.horizon) ? camera.horizon : (SCR_H * 0.5) | 0;
     for (var y = 0; y < SCR_H; y++) {

@@ -7,6 +7,7 @@ import { buildWaterMesh, updateWaterMesh } from './water';
 import { buildSkyDome, updateSkyDome } from './sky3d';
 import { buildCelestialRig, updateCelestialRig } from './celestial';
 import { renderBoat3D } from './boat3d';
+import { lightningStrength } from '../render/effects';
 import { boat } from '../state';
 
 let waterMesh: THREE.Mesh;
@@ -49,14 +50,16 @@ export function Draw3D(): boolean {
     // (원점 고정이면 배가 이동해 돔 경계를 벗어나는 순간 돔 밑면·바다 가장자리가 노출됨)
     // 물 평면 위치는 updateWaterMesh 가 정점 간격 단위로 스냅해 잡는다.
     skyDome.position.copy(camera3d.position);
-    updateSkyDome(skyDome, fog);
+    var flash = lightningStrength();
+    updateSkyDome(skyDome, fog, flash);
     updateCelestialRig(rig, camera3d.position);
+    rig.ambient.intensity += flash * 6 * Math.PI;   // 번개: 순간 전방위 조명
     _sunDir.copy(rig.sunLight.position).sub(rig.sunLight.target.position).normalize();
     // 반짝임 세기: 태양광 세기(π 단위)를 0~1 로. 지평선색 = fog 색(updateSkyDome 이 설정).
     updateWaterMesh(waterMesh, camera3d.position, _sunDir, rig.sunLight.color,
         Math.min(1, rig.sunLight.intensity / Math.PI), fog.color);
     Render3D();
-    renderBoat3D(renderer!, rig, camera3d.rotation.y);
+    renderBoat3D(renderer!, rig, camera3d.rotation.y, fog);
     return true;
 }
 

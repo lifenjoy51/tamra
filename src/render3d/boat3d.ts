@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import { boat, wind, wave, ship, sail as sailState } from '../state';
 import { SCR_W, SCR_H } from '../config';
 import type { CelestialRig } from './celestial';
+import { buildWeather3D, updateWeather3D } from './weather3d';
+import { fogStrength } from './sky3d';
 import { updateLocalSea, seaHeight, buildSeaPatch, updateSeaPatch, buildFoam, spawnFoam, updateFoam } from './boat-water';
 
 // 배 로컬 좌표: +X = 우현, +Y = 위, -Z = 선수 (three 카메라 기본 forward 와 같은 방향).
@@ -248,6 +250,8 @@ function build() {
     built = true;
     seaPatch = buildSeaPatch();
     boatScene.add(sunLight, sunLight.target, ambient, root, seaPatch, buildFoam());
+    buildWeather3D(boatScene);
+    boatScene.fog = new THREE.Fog(0xffffff, 1e4, 2e4);
     root.rotation.order = 'YXZ';
 
     var hullGeoMesh = buildHull();
@@ -372,7 +376,7 @@ function updateWake(v: number) {
 }
 
 // Draw3D 에서 메인 Render3D() 직후 호출.
-export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, camYaw: number) {
+export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, camYaw: number, fog: THREE.Fog) {
     if (!built) build();
     var t = wave.time;
 
@@ -400,6 +404,12 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     updateWake(v);
     updateFoam(v);
     updateSeaPatch(seaPatch);
+    updateWeather3D(v);
+    // 짙은 안개면 배 자체도 흐려진다 (메인 씬 fog 는 400m/unit 라 배 거리에선 효과 없음)
+    var bf = boatScene.fog as THREE.Fog, fs = fogStrength();
+    bf.color.copy(fog.color);
+    bf.far = fs > 0 ? 25 + 400 * (1 - fs) * (1 - fs) : 2e4;
+    bf.near = bf.far * 0.15;
     steerOar.rotation.y += (-boat.rudder * 0.5 - steerOar.rotation.y) * 0.2;
 
     // 메인 씬 조명을 배 좌표계(선수 = -Z)로 회전해 복사
