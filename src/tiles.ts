@@ -122,11 +122,13 @@ export async function initTiles(): Promise<{ startGx: number; startGy: number; s
     tmpC.height = TILE_SIZE;
     tmpCtx = tmpC.getContext('2d')!;
 
-    // URL 파라미터 ?tile=tx,ty 로 고정 시작 지정 (디버그/재현용).
-    // 없으면 랜덤 해안 타일. 최대 8회 재시도 (fully-land/sea 버퍼 타일 회피).
+    // 기본 시작 = 제주 남쪽 바다 (서귀포 앞 ~13km, 33.11°N 126.55°E), 뱃머리 북쪽(한라산 정면).
+    // 돛은 내린 채 시작(state.ts boat.sail=0). 해류 drift 로 해안에 바로 닿지 않게 거리 여유.
+    // URL 파라미터 ?tile=tx,ty 로 지정 타일 해안 시작(해안 셀 없으면 타일 중심),
+    // ?tile=random 이면 랜덤 해안 타일 (최대 30회 재시도, 못 찾으면 제주 시작 유지).
     var keys = Object.keys(tileIndex.tiles || {});
-    var startTx = 143, startTy = 30; // 폴백 (제주 근해)
-    var startGx = 73572, startGy = 15840;
+    var startTx = 149, startTy = 27;
+    var startGx = 76733, startGy = 14239;
     var startAngle = 0;
     var tileParam = new URLSearchParams(location.search).get('tile');
     var forced: [number, number] | null = null;
@@ -134,7 +136,7 @@ export async function initTiles(): Promise<{ startGx: number; startGy: number; s
         var m = tileParam.match(/^(\d+),(\d+)$/);
         if (m) forced = [+m[1], +m[2]];
     }
-    var maxAttempts = forced ? 1 : 30;
+    var maxAttempts = forced ? 1 : (tileParam === 'random' && keys.length > 0 ? 30 : 0);
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
         var tx: number, ty: number;
         if (forced) { tx = forced[0]; ty = forced[1]; }

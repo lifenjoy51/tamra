@@ -6,12 +6,12 @@
 
 // --- Boat / Ship ---
 // gx, gy 는 글로벌 월드 좌표 (0~WORLD_W). 시작 위치는 tile init 후 main.ts 에서 주입.
-// sail: 돛 면적 비율. 0 (접음) / 0.5 (절반) / 1 (완전). sMS ∝ sail (면적 비례 추진력).
+// sail: 돛 면적 비율. 0 (접음, 시작 기본값) / 0.5 (절반) / 1 (완전). sMS ∝ sail (면적 비례 추진력).
 //   W 키 = 한 단계 펼침, S 키 = 한 단계 접음. UI 버튼 직접 선택도 가능.
 // rudder: 키(舵) 위치. -1(hard left) ~ 0(center) ~ +1(hard right). 자동 복귀 없음.
 // yawRate: 현재 각속도 (rad / game-second). 목표 yaw 로 1차-응답 수렴 (관성).
 //   실제 범선은 러더 꺾어도 즉시 회전 시작 안 하고, 중앙 돌려놔도 관성으로 계속 돎.
-export const boat = { gx: 0, gy: 0, angle: Math.PI, sail: 1, rudder: 0, yawRate: 0 };
+export const boat = { gx: 0, gy: 0, angle: Math.PI, sail: 0, rudder: 0, yawRate: 0 };
 // ship 속도 상태: sail 추진, ground(해류 합성), heading
 export const ship = { sailMS: 0, groundMS: 0, groundDirRad: 0 };
 
