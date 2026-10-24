@@ -122,44 +122,38 @@ export async function initTiles(): Promise<{ startGx: number; startGy: number; s
     tmpC.height = TILE_SIZE;
     tmpCtx = tmpC.getContext('2d')!;
 
-    // 기본 시작 = 제주 남쪽 바다 (서귀포 앞 ~13km, 33.11°N 126.55°E), 뱃머리 북쪽(한라산 정면).
-    // 돛은 내린 채 시작(state.ts boat.sail=0). 해류 drift 로 해안에 바로 닿지 않게 거리 여유.
-    // URL 파라미터 ?tile=tx,ty 로 지정 타일 해안 시작(해안 셀 없으면 타일 중심),
-    // ?tile=random 이면 랜덤 해안 타일 (최대 30회 재시도, 못 찾으면 제주 시작 유지).
-    var keys = Object.keys(tileIndex.tiles || {});
-    var startTx = 149, startTy = 27;
-    var startGx = 76733, startGy = 14239;
-    var startAngle = 0;
+    // 기본 시작지점: 제주도 남쪽 바다, 북쪽(제주) 바라보기 고정.
+    // (tx=149, ty=27 부근 — lat≈32.8°N, lon≈126.55°E, ORIGIN_LON/LAT+DEG_PER_PIXEL 역산.)
+    // URL 파라미터 ?tile=tx,ty 로 다른 타일 강제 지정 가능(디버그/재현용).
+    var startTx = 149, startTy = 27; // 폴백
+    var startGx = 149 * TILE_SIZE + 256, startGy = 27 * TILE_SIZE + 256;
+    var startAngle = 0; // 0 = 북쪽 — moveBoat 전진 시 gy 감소(북상) 방향과 일치
     var tileParam = new URLSearchParams(location.search).get('tile');
     var forced: [number, number] | null = null;
     if (tileParam) {
         var m = tileParam.match(/^(\d+),(\d+)$/);
         if (m) forced = [+m[1], +m[2]];
     }
-    var maxAttempts = forced ? 1 : (tileParam === 'random' && keys.length > 0 ? 30 : 0);
-    for (var attempt = 0; attempt < maxAttempts; attempt++) {
-        var tx: number, ty: number;
-        if (forced) { tx = forced[0]; ty = forced[1]; }
-        else {
-            var key = keys[(Math.random() * keys.length) | 0];
-            var parts = key.split('_');
-            tx = +parts[0]; ty = +parts[1];
-        }
+    // 후보 타일: forced 지정 시 그것만, 아니면 제주 남쪽 바다 우선 순으로 순차 시도(랜덤 없음).
+    var candidates: [number, number][] = forced
+        ? [forced]
+        : [[149, 27], [149, 28], [150, 27], [148, 27], [149, 26], [143, 30]];
+
+    for (var attempt = 0; attempt < candidates.length; attempt++) {
+        var tx = candidates[attempt][0], ty = candidates[attempt][1];
         await loadTile(tx, ty);
         var slotI = tx % BUF_TILES, slotJ = ty % BUF_TILES;
         var bx0 = slotI * TILE_SIZE, by0 = slotJ * TILE_SIZE;
         // 시작 셀 후보 수집:
         //   (1) 자신은 바다, (2) 3x3 이웃 모두 바다 (moveBoat shore buffer 와 정합 → 첫 프레임에 갇히지 않음),
-        //   (3) 9x9 이웃에 육지 존재 (해안에서 네 칸 이내 = "해안 근방 바다")
-        // 후보별 육지 offset 평균도 모아 시작 방향(바다 쪽)을 결정한다.
+        //   (3) 9x9 이웃에 육지 존재 (해안에서 네 칸 이내 = "해안 근방 바다"),
+        //   (4) 육지가 북쪽(작은 y)에 있어야 함 — "남쪽 바다에서 북쪽을 바라본다" 요구사항.
         // 9x9 범위 → offset -4 ~ +4. ly/lx 시작/끝 버퍼 4 로 맞춤.
         var coastLx: number[] = [], coastLy: number[] = [];
-        var landVx: number[] = [], landVy: number[] = [];
         for (var ly = 4; ly < TILE_SIZE - 4; ly += 2) {
             for (var lx = 4; lx < TILE_SIZE - 4; lx += 2) {
                 var idx = (by0 + ly) * SIZE + (bx0 + lx);
                 if (altitude[idx] > SEA) continue;
-                // 3x3 전부 바다 (moveBoat 3x3 검사 통과)
                 var safe3 = true;
                 for (var nj = -1; nj <= 1 && safe3; nj++) {
                     for (var ni = -1; ni <= 1; ni++) {
@@ -169,33 +163,51 @@ export async function initTiles(): Promise<{ startGx: number; startGy: number; s
                     }
                 }
                 if (!safe3) continue;
-                // 9x9 내 육지 탐색 + 육지 방향 평균 (offset 합 / count)
-                var sxSum = 0, sySum = 0, landCnt = 0;
+                var sySum = 0, landCnt = 0;
                 for (var nj2 = -4; nj2 <= 4; nj2++) {
                     for (var ni2 = -4; ni2 <= 4; ni2++) {
                         if (altitude[(by0 + ly + nj2) * SIZE + (bx0 + lx + ni2)] > SEA) {
-                            sxSum += ni2; sySum += nj2; landCnt++;
+                            sySum += nj2; landCnt++;
                         }
                     }
                 }
                 if (landCnt === 0) continue; // 해안 아님(깊은 바다) → 제외
+                if (sySum >= 0) continue;    // 육지가 북쪽(음수 offset)에 있는 지점만 채택
                 coastLx.push(lx); coastLy.push(ly);
-                landVx.push(sxSum / landCnt); landVy.push(sySum / landCnt);
             }
         }
         if (coastLx.length > 0) {
-            var pick = (Math.random() * coastLx.length) | 0;
+            // 가장 남쪽(ly 최대) 후보 선택 — 이 지점은 "해안에서 4칸 이내"라 배가 북쪽으로
+            // 돛을 올리자마자 3x3 shore buffer 에 바로 걸려 멈춰버린다(moveBoat 첫 서브스텝에서 blocked).
+            // 항해할 공간을 확보하기 위해 이 앵커에서 남쪽으로 더 밀어낸 지점을 실제 시작점으로 쓴다.
+            var bestI = 0;
+            for (var ci = 1; ci < coastLy.length; ci++) {
+                if (coastLy[ci] > coastLy[bestI]) bestI = ci;
+            }
+            var anchorLx = coastLx[bestI], anchorLy = coastLy[bestI];
+            var pickedLy = anchorLy;
+            var southOffsets = [60, 45, 30, 15, 0]; // world px (60 ≈ 24km 여유)
+            for (var oi = 0; oi < southOffsets.length; oi++) {
+                var candLy = anchorLy + southOffsets[oi];
+                if (candLy > TILE_SIZE - 8) candLy = TILE_SIZE - 8; // 로드된 타일 범위 안에 고정
+                var safeOff = true;
+                for (var noj = -1; noj <= 1 && safeOff; noj++) {
+                    for (var noi = -1; noi <= 1; noi++) {
+                        if (altitude[(by0 + candLy + noj) * SIZE + (bx0 + anchorLx + noi)] > SEA) {
+                            safeOff = false; break;
+                        }
+                    }
+                }
+                if (safeOff) { pickedLy = candLy; break; }
+            }
             startTx = tx; startTy = ty;
-            startGx = tx * TILE_SIZE + coastLx[pick];
-            startGy = ty * TILE_SIZE + coastLy[pick];
-            // 시작 방향 = 육지 반대쪽(바다 쪽).
-            // moveBoat 이동벡터 = (-sin(a), -cos(a)). 이동이 (-landVx, -landVy) 방향을
-            // 향하게 하려면 sin(a) = landVx, cos(a) = landVy → a = atan2(landVx, landVy).
-            startAngle = Math.atan2(landVx[pick], landVy[pick]);
+            startGx = tx * TILE_SIZE + anchorLx;
+            startGy = ty * TILE_SIZE + pickedLy;
+            startAngle = 0; // 북쪽 고정
             break;
         }
         if (forced) {
-            // 해안 셀 없어도 지정 타일 중심 사용 (방향은 기본 북쪽)
+            // 해안 셀 없어도 지정 타일 중심 사용
             startTx = tx; startTy = ty;
             startGx = tx * TILE_SIZE + TILE_SIZE / 2;
             startGy = ty * TILE_SIZE + TILE_SIZE / 2;
