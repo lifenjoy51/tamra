@@ -7,10 +7,14 @@ import { RENDER_UNIT_M } from '../config';
 import { camera as gcam, boat, BASE_CAM_METERS } from '../state';
 
 // 2D voxel 렌더러는 곡률 계산 때문에 눈높이를 50m(BASE_CAM_METERS)로 고정해 쓰는데,
-// 3D 는 "배 위의 사람" 실제 시점 — 선미 갑판(수면 위 ~1.1m)에 선 키잡이 눈높이.
-// 배 뷰모델 카메라(boat3d.ts)도 같은 값 → 두 씬의 원근·수평선이 일치한다.
+// 3D 시점 높이의 기준 — 선미 갑판(수면 위 ~1.1m)에 선 키잡이 눈높이.
 export const EYE_HEIGHT_M = 2.6;
-export const CAM_PITCH = -0.05;   // 시선 살짝 아래 (≈ -3°) — 근경 바다·갑판을 더 보여줌
+// 3인칭 추적 시점: 키잡이 자리에서 뒤·위로 물러나 배 전체(선수~선미, 돛대 끝)를 한 화면에 담는다.
+// 메인 카메라도 같은 높이·pitch 를 써야 두 씬의 수평선이 일치한다 (뒤로 16m 는 메인 스케일에선 무시 가능).
+export const CHASE_BACK_M = 16;
+export const CHASE_UP_M = 5;
+export const VIEW_HEIGHT_M = EYE_HEIGHT_M + CHASE_UP_M;
+export const CAM_PITCH = -0.12;   // 시선 아래 (≈ -7°) — 뒤·위에서 배를 내려다본다
 
 // 수직 과장 배수. 1 = 실제. (과거 6 — 산이 6배로 솟아 실제 원근감과 어긋났다)
 export const V_EXAG = 1.0;
@@ -66,7 +70,7 @@ export function applyCameraToThree(cam: THREE.PerspectiveCamera) {
     cam.position.z = p.z;
     // gcam.heightMeters = max(BASE_CAM_METERS, 지형고도+여유) — baseline 을 낮은 값으로 치환하되
     // 지형을 타고 넘는 여유분(heightMeters - BASE_CAM_METERS)은 그대로 보존.
-    var eyeHeight3D = EYE_HEIGHT_M + Math.max(0, gcam.heightMeters - BASE_CAM_METERS);
+    var eyeHeight3D = VIEW_HEIGHT_M + Math.max(0, gcam.heightMeters - BASE_CAM_METERS);
     cam.position.y = metersToSceneY(eyeHeight3D);
     cam.rotation.order = 'YXZ';
     cam.rotation.y = boatAngleToSceneRotY(gcam.angle);

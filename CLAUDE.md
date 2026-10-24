@@ -75,7 +75,7 @@ python3 generate_maps.py
 | `render3d/index.ts` | three.js lowpoly 렌더 오케스트레이션 (init3D/Draw3D, `uiFlags.render3d` 기본 on, WebGL 실패 시 2D 폴백) |
 | `render3d/{renderer,coords,terrain-mesh,sky3d,celestial}.ts` | 씬/카메라, 월드↔씬 좌표(1 unit = 1 world px, 높이 ×V_EXAG), 지형 청크(원경 4px·배 근처 ~16km 1px LOD + 해안 셀 25m 분할 절벽, 원경과 맞닿은 변만 보간 이음), 스카이돔·안개, 태양/달 조명 |
 | `render3d/water.ts` | 메인 바다 (너울+교차 너울, 지평선 반사, 태양 반짝임 — 정점색) |
-| `render3d/boat3d.ts` | 방(舫) 쌍동선 뷰모델 — 미터 단위 전용 씬·카메라로 메인 렌더 위에 겹침 (돛·노꾼·조타 노·등불) |
+| `render3d/boat3d.ts` | 단동 목선 뷰모델 (`boat.png` 형태 — 넓은 둥근 선체·5칸 활대 거적돛·선미 중앙 키) — 미터 단위 전용 씬·추적 카메라로 메인 렌더 위에 겹침 (노꾼은 노 저을 때만·등불) |
 | `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클 |
 | `render3d/weather3d.ts` | 뷰모델 씬 비/눈 3D 파티클 |
 | `input.ts` | initInput + inputState.{rotStep, moveStep} |
@@ -194,7 +194,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 | `FRAME_INTERVAL` | 50 | 20fps cap |
 | `BASE_SAIL_SPEED` | 4 m/s | 돛 100% + windFactor 1 기준 |
 | `timeRef.TIME_SPEED` | 120 (초기) | 시간 가속 (T/Y로 1~7200) |
-| `EYE_HEIGHT_M` (render3d/coords) | 2.6 m | 3D 시점 = 선미 갑판 키잡이 눈높이 (배 뷰모델 카메라와 공유) |
+| `VIEW_HEIGHT_M` (render3d/coords) | 7.6 m | 3D 추적 시점 높이 = 키잡이 눈높이 2.6m + `CHASE_UP_M` 5m, 선미 뒤 `CHASE_BACK_M` 16m (메인·배 카메라 공유 → 수평선 일치) |
 | `FOV_V` (render3d/renderer) | 50° | 3D 세로 시야각 (16:9 가로 ≈ 80°) |
 | `V_EXAG` (render3d/coords) | 1 | 3D 높이 과장 없음 + `applyCurvature` 지구 곡률 (수평선 ~5.8km) |
 
