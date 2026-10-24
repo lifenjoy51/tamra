@@ -10,10 +10,13 @@ import { altitude, slotTiles } from '../tiles';
 import { heightMeters } from '../terrain';
 import { worldToScene, metersToSceneY, applyCurvature } from './coords';
 
-const STRIDE = 4;          // 월드 px 샘플 간격
+const STRIDE = 4;          // 원경 월드 px 샘플 간격 (1.6km)
+// 근경 LOD: 배 근처 청크는 1 px(400m) 간격 — 원경 간격이면 해안선이 km 단위로 어긋나
+// 배가 "보이지 않는 해안"에 막히거나 모래 비탈이 코앞에 벽처럼 선다.
+const STRIDE_NEAR = 1;
+const NEAR_DIST = 40;      // 배 ↔ 청크 최근접점 거리(world px, ~16km) 이내면 근경 LOD
+const NEAR_HYST = 8;       // 경계에서 LOD 가 깜박이지 않게 해제는 NEAR_DIST + NEAR_HYST 에서
 const CHUNK = 64;          // 청크 한 변 (world px). TILE_SIZE(512) 약수 → 청크는 항상 타일 1개 안에 들어간다.
-const CELLS = CHUNK / STRIDE;   // 청크당 한 변 셀 수
-const VERTS = CELLS + 1;        // 청크당 한 변 정점 수 (인접 청크와 경계 정점 중복)
 const BUILD_PER_FRAME = 8;
 
 // 바다 정점 높이(m). altitude 는 바다를 SEA 로 평탄화해 수심 정보가 없다.
@@ -55,6 +58,7 @@ applyCurvature(material);
 interface Chunk {
     mesh: THREE.Mesh | null; // 전부 바다면 null (그릴 삼각형 없음)
     tileKey: string | null;  // 생성 시점의 slotTiles 값 — 바뀌면(타일 늦게 로드/교체) 재생성
+    stride: number;          // 생성 LOD — 원하는 LOD 와 다르면 재생성
     seen: number;            // 마지막으로 범위 안에 있던 프레임
 }
 const chunks = new Map<string, Chunk>();
@@ -72,24 +76,47 @@ function altAt(gx: number, gy: number): number {
     return altitude[((gy & MASK) << SHIFT) + (gx & MASK)];
 }
 
-// 청크 정점 + 테두리 1칸(법선 중앙차분용) 높이 샘플. 바다 = SEA_FLOOR_Y.
-const H_N = VERTS + 2;
-const hBuf = new Float32Array(H_N * H_N);
-const seaBuf = new Uint8Array(H_N * H_N);
+function hAt(alt: number): number {
+    return alt <= SEA ? SEA_FLOOR_Y : metersToSceneY(heightMeters[alt]);
+}
 
-function buildChunkMesh(cx: number, cy: number): THREE.Mesh | null {
+// 청크 정점 + 테두리 1칸(법선 중앙차분용) 높이 샘플. 바다 = SEA_FLOOR_Y.
+// stride < STRIDE 인 근경 청크는 테두리 정점을 원경 격자 높이의 선형보간으로 맞춘다 —
+// 이웃 원경 청크의 모서리와 정확히 같은 선이 되어 LOD 경계에 틈이 생기지 않는다.
+function buildChunkMesh(cx: number, cy: number, stride: number): THREE.Mesh | null {
+    var CELLS = CHUNK / stride, VERTS = CELLS + 1, H_N = VERTS + 2;
+    var hBuf = new Float32Array(H_N * H_N);
+    var seaBuf = new Uint8Array(H_N * H_N);
     var gx0 = cx * CHUNK, gy0 = cy * CHUNK;
     var anyLand = false;
     for (var j = 0; j < H_N; j++) {
-        var gy = gy0 + (j - 1) * STRIDE;
+        var gy = gy0 + (j - 1) * stride;
         for (var i = 0; i < H_N; i++) {
-            var alt = altAt(gx0 + (i - 1) * STRIDE, gy);
+            var alt = altAt(gx0 + (i - 1) * stride, gy);
             var k = j * H_N + i;
-            if (alt <= SEA) { seaBuf[k] = 1; hBuf[k] = SEA_FLOOR_Y; }
-            else { seaBuf[k] = 0; hBuf[k] = metersToSceneY(heightMeters[alt]); anyLand = true; }
+            seaBuf[k] = alt <= SEA ? 1 : 0;
+            hBuf[k] = hAt(alt);
+            if (!seaBuf[k]) anyLand = true;
         }
     }
     if (!anyLand) return null;
+    if (stride < STRIDE) {
+        for (var e = 0; e < VERTS; e++) {
+            var off = e * stride, a = off - off % STRIDE, t = (off - a) / STRIDE;
+            if (t === 0) continue;
+            // 네 변: (e, 0) 위 / (e, CELLS) 아래 / (0, e) 왼 / (CELLS, e) 오른
+            for (var side = 0; side < 4; side++) {
+                var horiz = side < 2, fixed = (side & 1) ? CHUNK : 0;
+                var ax = horiz ? gx0 + a : gx0 + fixed, ay = horiz ? gy0 + fixed : gy0 + a;
+                var bx = horiz ? ax + STRIDE : ax, by = horiz ? ay : ay + STRIDE;
+                var altA = altAt(ax, ay), altB = altAt(bx, by);
+                var vxi = horiz ? e : (fixed / stride), vzi = horiz ? (fixed / stride) : e;
+                var kk = (vzi + 1) * H_N + (vxi + 1);
+                hBuf[kk] = hAt(altA) + (hAt(altB) - hAt(altA)) * t;
+                seaBuf[kk] = (altA <= SEA && altB <= SEA) ? 1 : 0;
+            }
+        }
+    }
 
     var positions = new Float32Array(VERTS * VERTS * 3);
     var normals = new Float32Array(VERTS * VERTS * 3);
@@ -99,15 +126,15 @@ function buildChunkMesh(cx: number, cy: number): THREE.Mesh | null {
         for (var vx = 0; vx < VERTS; vx++) {
             var hk = (vz + 1) * H_N + (vx + 1);
             var vi = (vz * VERTS + vx) * 3;
-            positions[vi]     = p0.x + vx * STRIDE;
+            positions[vi]     = p0.x + vx * stride;
             positions[vi + 1] = hBuf[hk];
-            positions[vi + 2] = p0.z + vz * STRIDE;
+            positions[vi + 2] = p0.z + vz * stride;
             // 높이장 y=f(x,z) 의 위쪽 법선 = (-fx, 1, -fz). 청크 밖 테두리 샘플을 써서 경계 이음매 없음.
-            var nx = -(hBuf[hk + 1] - hBuf[hk - 1]) / (2 * STRIDE);
-            var nz = -(hBuf[hk + H_N] - hBuf[hk - H_N]) / (2 * STRIDE);
+            var nx = -(hBuf[hk + 1] - hBuf[hk - 1]) / (2 * stride);
+            var nz = -(hBuf[hk + H_N] - hBuf[hk - H_N]) / (2 * stride);
             var inv = 1 / Math.sqrt(nx * nx + 1 + nz * nz);
             normals[vi] = nx * inv; normals[vi + 1] = inv; normals[vi + 2] = nz * inv;
-            var col = seaBuf[hk] ? COL_SAND : paletteFor(heightMeters[altAt(gx0 + vx * STRIDE, gy0 + vz * STRIDE)]);
+            var col = seaBuf[hk] ? COL_SAND : paletteFor(heightMeters[altAt(gx0 + vx * stride, gy0 + vz * stride)]);
             colors[vi] = col[0]; colors[vi + 1] = col[1]; colors[vi + 2] = col[2];
         }
     }
@@ -151,7 +178,7 @@ export function updateTerrainChunks(scene: THREE.Scene, gx: number, gy: number, 
     var reach = radius + CHUNK * 0.71; // 청크 중심 기준 반경 (대각 반폭 여유)
     var ccx = Math.floor(gx / CHUNK), ccy = Math.floor(gy / CHUNK);
     var r = Math.ceil(reach / CHUNK);
-    var todo: { cx: number; cy: number; d2: number; key: string; slot: string | null }[] = [];
+    var todo: { cx: number; cy: number; d2: number; key: string; slot: string | null; stride: number }[] = [];
 
     for (var cy = ccy - r; cy <= ccy + r; cy++) {
         for (var cx = ccx - r; cx <= ccx + r; cx++) {
@@ -161,11 +188,15 @@ export function updateTerrainChunks(scene: THREE.Scene, gx: number, gy: number, 
             var key = cx + '_' + cy;
             var slot = slotTiles[slotIdxOf(cx, cy)];
             var c = chunks.get(key);
+            // 배 ↔ 청크 사각형 최근접점 거리로 LOD 결정 (이미 근경이면 히스테리시스만큼 더 유지)
+            var nxd = Math.max(0, Math.abs(dx) - CHUNK / 2), nyd = Math.max(0, Math.abs(dy) - CHUNK / 2);
+            var nearR = NEAR_DIST + (c && c.stride === STRIDE_NEAR ? NEAR_HYST : 0);
+            var stride = nxd * nxd + nyd * nyd < nearR * nearR ? STRIDE_NEAR : STRIDE;
             if (c) {
                 c.seen = frameNo;
-                if (c.tileKey === slot) continue;
+                if (c.tileKey === slot && c.stride === stride) continue;
             }
-            todo.push({ cx, cy, d2, key, slot });
+            todo.push({ cx, cy, d2, key, slot, stride });
         }
     }
 
@@ -183,8 +214,8 @@ export function updateTerrainChunks(scene: THREE.Scene, gx: number, gy: number, 
         var t = todo[ti];
         var old = chunks.get(t.key);
         if (old) disposeChunk(scene, old);
-        var mesh = buildChunkMesh(t.cx, t.cy);
+        var mesh = buildChunkMesh(t.cx, t.cy, t.stride);
         if (mesh) scene.add(mesh);
-        chunks.set(t.key, { mesh: mesh, tileKey: t.slot, seen: frameNo });
+        chunks.set(t.key, { mesh: mesh, tileKey: t.slot, stride: t.stride, seen: frameNo });
     }
 }

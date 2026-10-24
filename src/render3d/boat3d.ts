@@ -61,6 +61,7 @@ let lanternOn = 0;
 interface Rower { oar: THREE.Group; torso: THREE.Group; phase: number; wasIn: boolean; }
 const rowers: Rower[] = [];
 let sailDisp = 0;                   // 화면상 돛 높이 비율 (boat.sail 로 부드럽게 수렴)
+let speedDisp = 0;                  // 화면상 대수속력 (ship.waterMS 로 관성 수렴)
 let rowBlend = 0;                   // 0 = 노 걷어 올림, 1 = 젓는 중
 let rowPhase = 0;
 let built = false;
@@ -396,8 +397,10 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     if (!built) build();
     var t = wave.time;
 
-    // 대수속력(돛+노)을 실시간 m/s 로 그대로 사용 — 물결·항적이 배 속도대로 뒤로 흐른다.
-    var v = ship.waterMS;
+    // 대수속력(돛+노)을 실시간 m/s 로 사용 — 물결·항적이 배 속도대로 뒤로 흐른다.
+    // 선체 관성: 돛을 내리거나 해안에 막혀도 즉시 멈추지 않고 ~1초(τ) 에 걸쳐 감속.
+    speedDisp += (ship.waterMS - speedDisp) * 0.05;
+    var v = speedDisp;
     updateLocalSea(v);
     // 흔들림: 선수/선미/좌우 선체 수면 높이 → heave·pitch·roll. 쌍동선은 수면을 거의 그대로 탄다.
     // 관성 smoothing 으로 짧은 잔물결엔 덜 반응. 바람 반대쪽 기울기(heel)는 단동선보다 작게.
