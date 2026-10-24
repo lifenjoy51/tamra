@@ -2,11 +2,14 @@
 // altRad/azRad → 방향벡터: 기존 2D 규약과 동일하게 (x,z) = (sin(az)*cos(alt), -cos(az)*cos(alt)),
 // y = sin(alt). (az: 0=북, 시계방향 증가 — boat.angle/wind 와 동일 좌표계)
 import * as THREE from 'three';
-import { sun, moonState } from '../state';
+import { sun, moonState, weather } from '../state';
 import { STARS, starState } from '../astronomy/stars';
 import { PLANETS, planetState } from '../astronomy/planets';
 
 const SKY_R = 1800;
+const SUN_HIGH = new THREE.Color(0xfff2d8), SUN_LOW = new THREE.Color(0xff9a50);
+const MOON_LIGHT = new THREE.Color(0xa8bcd8);
+const AMB_CLEAR = new THREE.Color(0x8899aa), AMB_CLOUD = new THREE.Color(0x9a9ea4);
 
 export function dirFromAltAz(altRad: number, azRad: number): THREE.Vector3 {
     var ca = Math.cos(altRad);
@@ -84,11 +87,26 @@ export function updateCelestialRig(rig: CelestialRig, camPos: THREE.Vector3) {
 
     // 태양광: 고도<0 이면 거의 소등(달빛 수준 ambient 만)
     // three r155+ 는 물리 단위 조명(Lambert 1/π 포함) — legacy 강도값에 π 를 곱해야 같은 밝기.
+    // 흐림: 직사광 감쇠 + 하늘 산란(ambient) 증가·회색화. 저고도 태양은 주황빛.
     var dayT = (sun.altDeg + 6) / 20; if (dayT < 0) dayT = 0; else if (dayT > 1) dayT = 1;
-    rig.sunLight.intensity = (0.15 + 1.05 * dayT) * Math.PI;
-    rig.sunLight.position.copy(camPos).addScaledVector(sunDir, 500);
+    var cloud = weather.cloudiness;
+    var lightDir = sunDir;
+    if (sun.altDeg > -2) {
+        var warm = 1 - sun.altDeg / 25; if (warm < 0) warm = 0; else if (warm > 1) warm = 1;
+        rig.sunLight.color.copy(SUN_HIGH).lerp(SUN_LOW, warm);
+        rig.sunLight.intensity = (0.15 + 1.05 * dayT) * (1 - 0.75 * cloud) * Math.PI;
+    } else if (moonState.altRad > 0) {
+        // 밤: 직사광 = 달빛 (위상 비례, 푸른 기). 태양이 지평선 아래에서 수면을 밑에서 비추지 않게.
+        lightDir = dirFromAltAz(moonState.altRad, moonState.azRad);
+        rig.sunLight.color.copy(MOON_LIGHT);
+        rig.sunLight.intensity = 0.35 * moonState.illumination * (1 - 0.8 * cloud) * Math.PI;
+    } else {
+        rig.sunLight.intensity = 0;
+    }
+    rig.sunLight.position.copy(camPos).addScaledVector(lightDir, 500);
     rig.sunLight.target.position.copy(camPos);
-    rig.ambient.intensity = (0.25 + 0.35 * dayT) * Math.PI;
+    rig.ambient.intensity = (0.25 + 0.35 * dayT) * (1 + 0.45 * cloud) * Math.PI;
+    rig.ambient.color.copy(AMB_CLEAR).lerp(AMB_CLOUD, cloud);
 
     rig.sunSprite.visible = sun.altDeg > -3;
     rig.sunSprite.position.copy(camPos).addScaledVector(sunDir, SKY_R);

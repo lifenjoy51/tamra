@@ -85,7 +85,7 @@ export function buildSeaPatch(): THREE.Mesh {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
     var mat = new THREE.MeshStandardMaterial({
         color: 0xffffff, vertexColors: true, transparent: true,
-        roughness: 0.3, metalness: 0.05, flatShading: true, side: THREE.DoubleSide,
+        roughness: 0.55, metalness: 0.05, flatShading: true, side: THREE.DoubleSide,
     });
     var mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = 1;   // 선체(불투명) 다음 — 잠긴 부분을 덮는다
