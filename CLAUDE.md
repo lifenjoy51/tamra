@@ -54,6 +54,7 @@ python3 generate_maps.py
 | `canvas.ts` | canvas/ctx/buf32/buf8/imagedata + fitCanvas + PX_SCALE |
 | `tiles.ts` | 타일 로더, altitude/colormap 링버퍼, slotTiles |
 | `terrain.ts` | generateColormap + piecewise heightMeters LUT |
+| `coast.ts` | 연속 해안 필드 — `coastL`(육지/바다 bilinear, 충돌용) / `coastDistM`(부호 거리) / `terrainHeightM`(해식 절벽 보정 높이). 배 충돌·3D 근경 지형이 공유 → 보이는 해안선 = 막히는 해안선 |
 | `physics/wind.ts` | Hadley/Ferrel/Polar + ITCZ + 몬순 |
 | `physics/sail.ts` | polarFor, computeSail, updateShipSpeed |
 | `physics/current.ts` | 적도류·쿠로시오·동호주 |
@@ -66,13 +67,13 @@ python3 generate_maps.py
 | `sky.ts` | skyRow/skyGlowX/Y/skyGlow + updateSky + cloud mask |
 | `render/voxel.ts` | **HOT PATH** — DrawVerticalLine + Render (bilinear 4-이웃) |
 | `render/background.ts` | DrawBackground (sky/구름/별/행성/달/태양 halo) |
-| `render/camera.ts` | UpdateCamera + moveBoat (3x3 shore buffer + 서브스텝 + 해안 미끄러짐) |
+| `render/camera.ts` | UpdateCamera + moveBoat (연속 해안선 충돌 + 서브스텝 + 해안 접선 미끄러짐) |
 | `render/effects.ts` | drawNearFog / drawPrecipitation / drawLightning |
 | `render/minimap.ts` | DrawMinimap + mmState.stride |
 | `render/boat-sprite.ts` | DrawBoat + boatSprite.img |
 | `render/skymap.ts` | DrawSkyMap (K 토글, polar azimuthal) |
 | `render3d/index.ts` | three.js lowpoly 렌더 오케스트레이션 (init3D/Draw3D, `uiFlags.render3d` 기본 on, WebGL 실패 시 2D 폴백) |
-| `render3d/{renderer,coords,terrain-mesh,sky3d,celestial}.ts` | 씬/카메라, 월드↔씬 좌표(1 unit = 1 world px, 높이 ×V_EXAG), 지형 청크(원경 4px·배 근처 ~16km 1px LOD, 테두리 보간으로 틈 없음), 스카이돔·안개, 태양/달 조명 |
+| `render3d/{renderer,coords,terrain-mesh,sky3d,celestial}.ts` | 씬/카메라, 월드↔씬 좌표(1 unit = 1 world px, 높이 ×V_EXAG), 지형 청크(원경 4px·배 근처 ~16km 1px LOD + 해안 셀 25m 분할 절벽, 원경과 맞닿은 변만 보간 이음), 스카이돔·안개, 태양/달 조명 |
 | `render3d/water.ts` | 메인 바다 (너울+교차 너울, 지평선 반사, 태양 반짝임 — 정점색) |
 | `render3d/boat3d.ts` | 방(舫) 쌍동선 뷰모델 — 미터 단위 전용 씬·카메라로 메인 렌더 위에 겹침 (돛·노꾼·조타 노·등불) |
 | `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클 |
@@ -118,8 +119,8 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 - **돛 polar curve** ([src/physics/sail.ts](src/physics/sail.ts) `polarFor`): IRONS(0.05) / CLOSE(0.55) / BEAM(1.00) / BROAD(1.20) / RUN(0.90)
 - **추진 속도** (`computeSail` + `updateShipSpeed`): `BASE_SAIL_SPEED(4 m/s) × polar × windFactor(wind/8, clamp 0.3~1.8)`
 - **해류 drift**: 돛+노 추진 벡터 + 해류 벡터 = `ship.groundMS` / `ship.groundDirRad`
-- **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용. 막히면 x/y 축 성분으로 미끄러짐(비스듬히 닿으면 해안 따라 흐름, 정면이면 정지). `moveBoat` 가 전진 비율을 돌려줘 `ship.waterMS` 를 깎고, `ship.groundMS/groundDirRad` 는 실제 이동량으로 재계산
-- **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*4)` — 큰 step에서도 중간 셀 체크 누락 방지
+- **해안 충돌** ([src/coast.ts](src/coast.ts)): 셀 꼭짓점 육지/바다 bilinear `coastL` 의 0 등고선이 해안선. `coastL < -0.1`(해안에서 ~20m) 이어야 항해 가능 — 해안 바로 앞까지 접근. 막히면 ∇L 성분을 뺀 접선으로 미끄러짐(볼록 해안은 바다 쪽 되밀기, 오목한 구석·정면이면 정지). `moveBoat` 가 전진 비율을 돌려줘 `ship.waterMS` 를 깎고, `ship.groundMS/groundDirRad` 는 실제 이동량으로 재계산
+- **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*40)` (≤10m) — 큰 step에서도 해안 통과 방지, 근접 정지 오차 최소화
 - **카메라 = 배에 snap**: smoothing/spring-arm 제거. `camera.x/y/angle = boat.*` 직접 대입
 - **카메라 높이**: 기본 `50m`, 지형 위에서 `지형높이 + 20m`로 자동 상승
 

@@ -1,14 +1,14 @@
 // camera.ts — 배 이동 + 카메라 snap + 물리/태양/날씨 매 프레임 갱신.
 // UpdateCamera 가 게임 시간 진행(gameTime) 및 보트 이동을 모두 담당.
-// moveBoat: 3x3 shore buffer + 서브스텝 분할 (큰 step에서 중간 셀 누락 방지) + 해안 미끄러짐.
-import { MASK, SHIFT, SEA, WORLD_W, WORLD_H } from '../config';
+// moveBoat: 연속 해안선(coast.ts) 충돌 + 서브스텝 분할 (큰 step에서 해안 통과 방지) + 해안 미끄러짐.
+import { WORLD_W, WORLD_H } from '../config';
 import {
     boat, ship, camera, current,
     timeRef, frameStats, uiFlags,
     BASE_CAM_METERS, CAM_HEIGHT_MARGIN, RUDDER_POWER, RUDDER_TAU,
 } from '../state';
-import { heightMeters } from '../terrain';
-import { altitude, ensureTilesLoaded } from '../tiles';
+import { ensureTilesLoaded } from '../tiles';
+import { coastL, terrainHeightM } from '../coast';
 import { computeWind } from '../physics/wind';
 import { computeSail, updateShipSpeed } from '../physics/sail';
 import { computeCurrent } from '../physics/current';
@@ -17,38 +17,44 @@ import { computeWeather } from '../physics/weather';
 import { computeSun } from '../astronomy/sun';
 import { updateStars } from '../astronomy/stars';
 
-// (nx, ny) 가 속한 셀의 3x3 이웃 중 육지가 있으면 true
+// 배 중심이 해안선(L=0) 바깥 L < -SHORE_L 이어야 항해 가능 — 해안 기울기 ~2/셀 기준 ≈ 20m
+// (선체 반 길이 6.5m + 여유).
+const SHORE_L = 0.1;
+const GRAD_EPS = 0.01;   // 해안 법선 차분 간격 (셀, 4m)
+
 function shoreBlocked(nx: number, ny: number): boolean {
-    var cx = Math.floor(nx), cy = Math.floor(ny);
-    for (var oy = -1; oy <= 1; oy++) {
-        for (var ox = -1; ox <= 1; ox++) {
-            var off = (((cy + oy) & MASK) << SHIFT) + ((cx + ox) & MASK) | 0;
-            if (altitude[off] > SEA) return true;
-        }
-    }
-    return false;
+    return coastL(nx, ny) > -SHORE_L;
 }
 
-// 반환: 요청 이동 방향으로 실제 나아간 비율 (0~1). 해안에 막히면 축 성분으로 미끄러진다 —
-// 비스듬히 닿으면 해안을 따라 흘러가고, 정면으로 들이받으면 멈춘다.
+// 반환: 요청 이동 방향으로 실제 나아간 비율 (0~1). 해안에 막히면 해안선 접선 방향 성분으로
+// 미끄러진다 — 비스듬히 닿으면 해안을 따라 흘러가고, 정면으로 들이받으면 멈춘다.
 export function moveBoat(dx, dy): number {
     var mvLen = Math.hypot(dx, dy);
     if (mvLen === 0) return 1;
-    var SUBSTEPS = Math.max(1, Math.ceil(mvLen * 4));
+    var SUBSTEPS = Math.max(1, Math.ceil(mvLen * 40));   // 서브스텝 ≤ 10m — 해안 근접 정지 위치 오차
     var sx = dx / SUBSTEPS, sy = dy / SUBSTEPS;
     var mx = 0, my = 0;   // 실제 이동량 (wrap 전)
     for (var si = 0; si < SUBSTEPS; si++) {
         var ax = sx, ay = sy;
         if (shoreBlocked(boat.gx + ax, boat.gy + ay)) {
-            if (Math.abs(sx) >= Math.abs(sy)) {
-                if (!shoreBlocked(boat.gx + sx, boat.gy)) ay = 0;
-                else if (!shoreBlocked(boat.gx, boat.gy + sy)) ax = 0;
-                else break;
-            } else {
-                if (!shoreBlocked(boat.gx, boat.gy + sy)) ax = 0;
-                else if (!shoreBlocked(boat.gx + sx, boat.gy)) ay = 0;
-                else break;
+            // 육지 쪽 법선 = ∇L. 그 성분을 빼서 접선으로.
+            var gx = coastL(boat.gx + GRAD_EPS, boat.gy) - coastL(boat.gx - GRAD_EPS, boat.gy);
+            var gy = coastL(boat.gx, boat.gy + GRAD_EPS) - coastL(boat.gx, boat.gy - GRAD_EPS);
+            var gl = Math.hypot(gx, gy);
+            if (gl < 1e-9) break;
+            var grad = gl / (2 * GRAD_EPS);   // L 기울기 (/셀)
+            gx /= gl; gy /= gl;
+            var into = ax * gx + ay * gy;
+            if (into > 0) { ax -= into * gx; ay -= into * gy; }
+            if (Math.hypot(ax, ay) < 1e-6) break;
+            // 볼록한 해안에선 접선으로 가도 L 이 살짝 오른다 — 넘친 만큼 바다 쪽으로 되밀기
+            var over = coastL(boat.gx + ax, boat.gy + ay) + SHORE_L;
+            if (over > 0) {
+                var push = over / Math.max(grad, 0.5) + 1e-4;
+                if (push > Math.hypot(sx, sy)) break;   // 서브스텝보다 크게 밀어야 하면 오목한 구석 — 정지
+                ax -= gx * push; ay -= gy * push;
             }
+            if (shoreBlocked(boat.gx + ax, boat.gy + ay)) break;
         }
         var nx = boat.gx + ax, ny = boat.gy + ay;
         mx += ax; my += ay;
@@ -117,8 +123,8 @@ export function UpdateCamera() {
         }
     }
 
-    var camoff = ((Math.floor(camera.y) & MASK) << SHIFT) + (Math.floor(camera.x) & MASK) | 0;
-    var terAtCamM = heightMeters[altitude[camoff]];
+    // 셀 꼭짓점 고도가 아니라 연속 지형 높이 — 해안 바로 앞에서 꼭짓점이 육지라도 눈높이가 튀지 않게.
+    var terAtCamM = Math.max(0, terrainHeightM(camera.x, camera.y));
     camera.heightMeters = Math.max(BASE_CAM_METERS, terAtCamM + CAM_HEIGHT_MARGIN);
 
     ensureTilesLoaded();
