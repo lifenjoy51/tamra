@@ -1,13 +1,16 @@
 // toggle.ts — 우상단 + 우하단 아이콘 버튼.
 //   ★: 하늘보기 (uiFlags.skyMapOn) — K 키와 동기화.
+//   櫓: 노 젓기 (boat.row) — R 키와 동기화.
 //   音: 음소거 토글 (audio.muted) — M 키와 동기화. localStorage 영속은 setMuted 가 처리.
 //   i: 디버그 패널 show/hide — localStorage 에 상태 저장(새로고침 후 복원).
-import { uiFlags } from '../state';
+import { uiFlags, boat } from '../state';
+import { uiBlip } from '../audio';
 import { audio, setMuted } from '../audio';
 
 const LS_KEY_DEBUG = 'tamra_debug_visible';
 
 let btnSky: HTMLButtonElement | null = null;
+let btnRow: HTMLButtonElement | null = null;
 let btnMute: HTMLButtonElement | null = null;
 let btnDebug: HTMLButtonElement | null = null;
 let debugEl: HTMLElement | null = null;
@@ -25,6 +28,7 @@ export function initToggleUI() {
     document.getElementById('toggle-ui')?.classList.add('ready');
     document.getElementById('sky-ui')?.classList.add('ready');
     btnSky = document.getElementById('btn-sky') as HTMLButtonElement | null;
+    btnRow = document.getElementById('btn-row') as HTMLButtonElement | null;
     btnMute = document.getElementById('btn-mute') as HTMLButtonElement | null;
     btnDebug = document.getElementById('btn-debug') as HTMLButtonElement | null;
     debugEl = document.getElementById('debug');
@@ -38,6 +42,13 @@ export function initToggleUI() {
         btnSky.addEventListener('click', () => {
             uiFlags.skyMapOn = !uiFlags.skyMapOn;
             btnSky!.blur(); // 후속 Space/Enter 가 버튼 재발동하지 않도록 포커스 해제
+        });
+    }
+    if (btnRow) {
+        btnRow.addEventListener('click', () => {
+            boat.row = boat.row ? 0 : 1;
+            uiBlip(boat.row ? 480 : 300);
+            btnRow!.blur();
         });
     }
     if (btnMute) {
@@ -60,6 +71,7 @@ export function initToggleUI() {
 // 디버그 active 는 버튼 자체 클릭에서만 변하므로 applyDebug() 에서 갱신 → 여기선 불필요.
 export function updateToggleUI() {
     if (btnSky) btnSky.classList.toggle('active', uiFlags.skyMapOn);
+    if (btnRow) btnRow.classList.toggle('active', boat.row === 1);
     if (btnMute) {
         btnMute.classList.toggle('active', audio.muted);
         btnMute.title = audio.muted ? '음소거 해제' : '음소거';

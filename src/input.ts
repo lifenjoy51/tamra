@@ -1,8 +1,8 @@
 // input.ts — 키보드 + 포인터 핸들러.
-// 러더(A/D) / 돛(W/S) / 스텝 조절([/]/,/.) / 미니맵 축척(-/=) / 시간속도(T/Y) /
+// 러더(A/D) / 돛(W/S) / 노(R) / 스텝 조절([/]/,/.) / 미니맵 축척(-/=) / 시간속도(T/Y) /
 // 하늘보기(K) / 음소거(M). hold 시 브라우저 auto-repeat 로 연속 효과.
 // A/D 는 즉시 각도를 바꾸지 않고 boat.rudder 만 조정 — 실제 회전은 UpdateCamera 에서
-// rudder × sailMS × RUDDER_GAIN × dt 로 서서히 적용.
+// rudder × waterMS × RUDDER_POWER × dt 로 서서히 적용.
 import { TIME_SPEED_MIN, TIME_SPEED_MAX } from './config';
 import { boat, timeRef, uiFlags, RUDDER_STEP } from './state';
 import { mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
@@ -32,6 +32,10 @@ export function initInput() {
                     boat.sail = Math.max(0, boat.sail - 0.5);
                     uiBlip(340);
                 }
+                break;
+            case 82: // R: 노 젓기 토글
+                boat.row = boat.row ? 0 : 1;
+                uiBlip(boat.row ? 480 : 300);
                 break;
             case 65: case 37: // A, Left: 키를 왼쪽으로 (음수). 회전은 점진적.
                 boat.rudder = Math.max(-1, boat.rudder - RUDDER_STEP);

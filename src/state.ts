@@ -11,9 +11,10 @@
 // rudder: 키(舵) 위치. -1(hard left) ~ 0(center) ~ +1(hard right). 자동 복귀 없음.
 // yawRate: 현재 각속도 (rad / game-second). 목표 yaw 로 1차-응답 수렴 (관성).
 //   실제 범선은 러더 꺾어도 즉시 회전 시작 안 하고, 중앙 돌려놔도 관성으로 계속 돎.
-export const boat = { gx: 0, gy: 0, angle: Math.PI, sail: 0, rudder: 0, yawRate: 0 };
-// ship 속도 상태: sail 추진, ground(해류 합성), heading
-export const ship = { sailMS: 0, groundMS: 0, groundDirRad: 0 };
+// row: 노 젓기 0/1 (R 키 / 櫓 버튼). 바람과 무관하게 ROW_SPEED 추진 — 무풍·역풍 탈출용.
+export const boat = { gx: 0, gy: 0, angle: Math.PI, sail: 0, rudder: 0, yawRate: 0, row: 0 };
+// ship 속도 상태: sail/row 추진, water(대수속력 = sail + row, 러더 효과 기준), ground(해류 합성), heading
+export const ship = { sailMS: 0, rowMS: 0, waterMS: 0, groundMS: 0, groundDirRad: 0 };
 
 // --- Camera (3인칭: 배 뒤에서 추적) ---
 // camera.x, camera.y 는 글로벌 월드 좌표 (렌더 루프에서 & MASK 로 버퍼 위치 매핑)
@@ -100,6 +101,7 @@ export const frameStats = {
 };
 
 // --- 물리/루프 상수 ---
+export const ROW_SPEED = 1.2;          // 노꾼 지속 가능 속도(~2.3노). 돛과 합산
 export const BASE_SAIL_SPEED = 4;     // polar=1 · windFactor=1 기준 (풍속 8 m/s 빔리치) 4 m/s
 export const BASE_CAM_METERS = 50;    // 기본 카메라 높이 (meters)
 export const CAM_HEIGHT_MARGIN = 20;  // 카메라 아래 지형 있을 때 띄울 여유 (m)
@@ -109,7 +111,7 @@ export const FRAME_EPSILON = 8;       // rAF 지터 허용 (half-period)
 // --- Rudder (키) ---
 // RUDDER_STEP: A/D 한 번 누를 때 rudder 증분 (-1..+1 을 4번에 끝까지).
 // RUDDER_POWER: steady-state 회전률 = rudder × sailMS × POWER (rad / game-second).
-//   Hard-over(1) + sailMS 5m/s → 0.00075 rad/s(game). TIME_SPEED=120 가속에선 실제 5°/s 체감.
+//   (sailMS 자리는 실제로 대수속력 ship.waterMS = 돛 + 노.) Hard-over(1) + sailMS 5m/s → 0.00075 rad/s(game). TIME_SPEED=120 가속에선 실제 5°/s 체감.
 //   sailMS=0 (무풍/돛 내림) 이면 목표 0 → 관성으로 회전 감쇠. 실제 범선의 "steerage way 상실".
 // RUDDER_TAU: 1차 응답 시상수 (game seconds). 63% 접근/감쇠 시간.
 //   240s game ≈ 2s 실제 @ TIME_SPEED=120. 키 꺾어도 바로 steady 아니고, 중앙 복귀 후에도

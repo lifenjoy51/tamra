@@ -65,16 +65,16 @@ export function UpdateCamera() {
     var gameDt = uiFlags.skyMapOn ? 0 : (dtMs * timeRef.TIME_SPEED) / 1000;
     if (gameDt > 0) {
         // 러더 유체역학 (1차 응답, exact exponential):
-        //   목표 yaw = rudder × sailMS × POWER (rad / game-sec). sailMS 는 돛 추진력 — 해류
+        //   목표 yaw = rudder × waterMS × POWER (rad / game-sec). waterMS 는 돛+노 대수속력 — 해류
         //   drift 는 물과 함께 움직이므로 러더 효과에 기여 안 함.
         //   yawRate 는 τ=RUDDER_TAU 로 목표에 지수 감쇠 수렴 — 키 꺾어도 즉시 회전 점프 안 함.
         //   rudder=+1(우) → yaw > 0 → angle 감소 (convention: 0=북, π/2=서, 증가=반시계 — 우현 선회 = 감소).
-        var targetYaw = boat.rudder * ship.sailMS * RUDDER_POWER;
+        var targetYaw = boat.rudder * ship.waterMS * RUDDER_POWER;
         var decay = Math.exp(-gameDt / RUDDER_TAU);
         boat.yawRate = targetYaw + (boat.yawRate - targetYaw) * decay;
         boat.angle -= boat.yawRate * gameDt;
-        if (boat.sail > 0 && ship.sailMS > 0.01) {
-            var sU = ship.sailMS * gameDt / 400;
+        if (ship.waterMS > 0.01) {
+            var sU = ship.waterMS * gameDt / 400;
             moveBoat(-Math.sin(boat.angle) * sU, -Math.cos(boat.angle) * sU);
         }
         if (current.speedMS > 0.01) {

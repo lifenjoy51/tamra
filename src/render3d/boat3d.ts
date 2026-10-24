@@ -1,32 +1,38 @@
-// boat3d.ts — lowpoly 5세기 판재선(선체 + 돛대 + 배튼 돛 + 조타 노 + 사공) 뷰모델 오버레이.
-// 메인 씬은 1 unit = 1 world px = 400m 라 16m 배가 0.04 unit 로 사실상 안 보인다.
+// boat3d.ts — 5세기 방(舫) 쌍동선 뷰모델 오버레이.
+// 준구조선(통나무 밑판 + 현측판, 양끝이 높이 들린 하니와 배 형태) 두 척을 가로보·갑판으로 잇고
+// 사각 거적돛 1장 + 노꾼 6 + 조타 노/키잡이. (docs/PERIOD_NOTES.md: 원양은 방 형태로 안정성 확보)
+//
+// 메인 씬은 1 unit = 1 world px = 400m 라 15m 배가 0.04 unit 로 사실상 안 보인다.
 // 2D 스프라이트(boat-sprite.ts)와 같은 발상으로, 배는 미터 단위 전용 씬 + 전용 카메라(배 뒤·위)로
 // 메인 렌더 위에 depth 만 지우고 겹쳐 그린다. 카메라 pitch/FOV 가 메인과 같아 수평선 위치가 일치.
 // 조명은 메인 태양광/ambient 를 배 기준 좌표로 돌려 복사, 흘수선 아래는 clipping plane 으로 잘라
-// 물에 잠긴 것처럼 보이게 한다. 돛 높이(boat.sail)·활대 각(상대풍)·키(boat.rudder)·너울 흔들림 반영.
+// 물에 잠긴 것처럼 보이게 한다. 돛 높이(boat.sail)·활대 각(상대풍)·키(boat.rudder)·노(boat.row)·너울 반영.
 import * as THREE from 'three';
 import { boat, wind, wave, sail as sailState } from '../state';
 import { SCR_W, SCR_H } from '../config';
 import type { CelestialRig } from './celestial';
 
 // 배 로컬 좌표: +X = 우현, +Y = 위, -Z = 선수 (three 카메라 기본 forward 와 같은 방향).
-const LEN = 15;            // 선체 길이(m)
-const BEAM = 2.1;          // 최대 반폭(m)
-const MAST_Z = -1.2;       // 돛대 위치(선체 중앙보다 약간 앞)
-const MAST_H = 11;         // 갑판 위 돛대 높이
-const DECK_Y = 1.05;       // 돛대 밑동 높이(중앙부 갑판)
-const SAIL_W = 6.4;
-const SAIL_H = 7.2;        // 완전히 올렸을 때 돛 높이
-const SAIL_FURL_H = 0.35;  // 접었을 때 활대-하활 간격(배튼이 쌓인 두께)
-const BOOM_Y = DECK_Y + 1.6;
-const BATTENS = 6;         // 돛 패널 수 (배튼 = 패널 경계)
+const LEN = 13;            // 선체 길이(m)
+const HB = 0.85;           // 선체 최대 반폭(m)
+const HULL_X = 1.7;        // 두 선체 중심선 간격의 절반
+const DECK_Y = 1.08;       // 갑판(가로보 위) 높이
+const MAST_Z = -0.6;
+const MAST_H = 9;
+const SAIL_W = 5.0;
+const SAIL_H = 5.6;        // 완전히 올렸을 때 돛 높이
+const SAIL_FURL_H = 0.3;   // 내렸을 때 활대-하활 간격(말아 묶은 거적 두께)
+const BOOM_Y = DECK_Y + 1.25;
+const SAIL_ROWS = 12;      // 거적 엮음 띠 수
+const ROWER_Z = [-3.2, -0.4, 2.4];
 
 const WAVE_AMP_TO_M = 0.25; // water.ts 와 같은 환산 (swell amp → m)
 
 const COL = {
-    hullA: 0x7a4e2c, hullB: 0x6a4224, wale: 0x3e2614, rim: 0x4a2e18,
-    deck: 0xa47a4c, mast: 0x5e4028, sail: 0xd8c49a, batten: 0x5a4128,
-    skin: 0xc89870, cloth: 0x3d4a5c,
+    rim: 0x4a2e18, plankA: 0x8a5a32, plankB: 0x7d5230, log: 0x5b3a22, logDark: 0x4f321d,
+    inner: 0x6a4224, floor: 0x7a5232, deckA: 0xa47a4c, deckB: 0x94693e, beam: 0x5e4028,
+    mast: 0x5e4028, matA: 0xc9b07a, matB: 0xb89c66, rope: 0x2e2216,
+    skin: 0xc89870, cloth: 0x8a7a5c, clothDark: 0x5c5040,
 };
 
 const boatScene = new THREE.Scene();
@@ -39,9 +45,14 @@ const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const root = new THREE.Group();     // heave/roll/pitch 적용
 let sailRig: THREE.Group;           // 돛대 축 회전(활대 각)
 let sailMesh: THREE.Mesh;
-let battenMeshes: THREE.Mesh[] = [];
-let oar: THREE.Group;
+let yard: THREE.Mesh;
+let boom: THREE.Mesh;
+let steerOar: THREE.Group;
+interface Rower { oar: THREE.Group; torso: THREE.Group; phase: number; }
+const rowers: Rower[] = [];
 let sailDisp = 0;                   // 화면상 돛 높이 비율 (boat.sail 로 부드럽게 수렴)
+let rowBlend = 0;                   // 0 = 노 걷어 올림, 1 = 젓는 중
+let rowPhase = 0;
 let built = false;
 
 const _sunDir = new THREE.Vector3();
@@ -53,19 +64,19 @@ function mat(hex: number, extra?: THREE.MeshStandardMaterialParameters) {
         side: THREE.DoubleSide, clippingPlanes: [waterPlane],
     }, extra));
 }
-
-// 선체 단면 프로파일. u: 0 = 선수, 1 = 선미.
-function halfWidth(u: number) {
-    var bow = Math.pow(Math.sin(Math.min(u, 0.5) * Math.PI), 0.7);    // 선수는 뾰족
-    var stern = 0.55 + 0.45 * Math.pow(Math.sin(Math.max(u, 0.5) * Math.PI), 0.5); // 선미는 뭉툭(트랜섬)
-    return BEAM * (u < 0.5 ? Math.max(0.04, bow) : stern);
+function box(w: number, h: number, d: number, hex: number) {
+    return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(hex));
 }
-function sheerY(u: number) { var t = 2 * u - 1; return 1.3 + 0.55 * t * t + 0.5 * Math.pow(1 - u, 5); }
-function keelY(u: number)  { var t = 2 * u - 1; return -0.75 + 0.7 * Math.pow(Math.abs(t), 3.5); }
 
-// 비인덱스 삼각형 + 면별 vertex color (flatShading 으로 각진 판재 느낌).
+// 준구조선 단면 프로파일. u: 0 = 선수, 1 = 선미. 양끝이 급격히 들린다(하니와 배 형태).
+function halfWidth(u: number) { var t = Math.abs(2 * u - 1); return Math.max(0.03, HB * Math.pow(1 - Math.pow(t, 2.2), 0.6)); }
+function sheerY(u: number)    { var t = Math.abs(2 * u - 1); return 0.95 + 1.5 * Math.pow(t, 5); }
+function seamY(u: number)     { var t = Math.abs(2 * u - 1); return 0.35 + 0.9 * Math.pow(t, 4); }  // 통나무 밑판 ↔ 현측판 이음
+function keelY(u: number)     { var t = Math.abs(2 * u - 1); return -0.5 + 0.75 * Math.pow(t, 3); }
+
+// 비인덱스 삼각형 + 면별 vertex color (flatShading 으로 각진 판재 느낌). 선체 1척, 중심선 x=0.
 function buildHull(): THREE.Mesh {
-    var STATIONS = 11;
+    var STATIONS = 15;
     var pos: number[] = [], col: number[] = [];
     var c = new THREE.Color();
     function tri(a: number[], b: number[], d: number[], hex: number) {
@@ -76,111 +87,186 @@ function buildHull(): THREE.Mesh {
     function quad(a: number[], b: number[], cc: number[], d: number[], hex: number) {
         tri(a, b, cc, hex); tri(a, cc, d, hex);
     }
-    // 단면 꼭짓점 (한쪽 현): 갑판 테두리 → 상부 외판 → 만곡부 → 용골. side = +1 우현 / -1 좌현.
+    // 단면 꼭짓점 (한쪽 현). side = +1 우현 / -1 좌현.
     function section(u: number, side: number): number[][] {
-        var z = -LEN / 2 + u * LEN, hw = halfWidth(u), top = sheerY(u), bot = keelY(u);
+        var z = -LEN / 2 + u * LEN, hw = halfWidth(u), top = sheerY(u), seam = seamY(u), bot = keelY(u);
         return [
-            [side * hw * 0.86, top, z],                        // 0 안쪽 테두리
-            [side * hw, top, z],                               // 1 바깥 테두리
-            [side * hw * 0.97, bot + (top - bot) * 0.62, z],   // 2 상부 외판
-            [side * hw * 0.84, bot + (top - bot) * 0.3, z],    // 3 중부 외판
-            [side * hw * 0.5, bot + 0.06, z],                  // 4 만곡부
-            [0, bot, z],                                       // 5 용골
-            [side * hw * 0.86, top - 0.32, z],                 // 6 갑판 가장자리
+            [side * hw * 0.8, top, z],                       // 0 안쪽 테두리
+            [side * hw, top, z],                             // 1 바깥 테두리
+            [side * hw * 1.03, (top + seam) / 2, z],         // 2 현측판 중간
+            [side * hw * 0.98, seam, z],                     // 3 이음선
+            [side * hw * 0.7, bot + (seam - bot) * 0.25, z], // 4 통나무 만곡부
+            [0, bot, z],                                     // 5 용골
+            [side * hw * 0.68, seam - 0.12, z],              // 6 안쪽 바닥 가장자리
         ];
     }
-    var strakeCols = [COL.wale, COL.hullA, COL.hullB, COL.hullA];
     for (var s = 0; s < STATIONS - 1; s++) {
         var u0 = s / (STATIONS - 1), u1 = (s + 1) / (STATIONS - 1);
         for (var side = -1; side <= 1; side += 2) {
             var A = section(u0, side), B = section(u1, side);
-            quad(A[0], A[1], B[1], B[0], COL.rim);               // 테두리 윗면
-            for (var k = 1; k <= 4; k++) quad(A[k], A[k + 1], B[k + 1], B[k], strakeCols[k - 1]); // 외판 4단
-            quad(A[0], A[6], B[6], B[0], COL.hullB);             // 안쪽 뱃전
+            quad(A[0], A[1], B[1], B[0], COL.rim);                       // 테두리 윗면
+            quad(A[1], A[2], B[2], B[1], COL.plankA);                    // 현측판 위
+            quad(A[2], A[3], B[3], B[2], COL.plankB);                    // 현측판 아래
+            quad(A[3], A[4], B[4], B[3], COL.log);                       // 통나무 밑판
+            quad(A[4], A[5], B[5], B[4], COL.logDark);
+            quad(A[0], A[6], B[6], B[0], COL.inner);                     // 안쪽 뱃전
         }
         var P0 = section(u0, -1), P1 = section(u1, -1), S0 = section(u0, 1), S1 = section(u1, 1);
-        quad(P0[6], S0[6], S1[6], P1[6], (s & 1) ? COL.deck : 0x9a7044); // 갑판 (판자 줄무늬)
+        quad(P0[6], S0[6], S1[6], P1[6], COL.floor);                     // 안쪽 바닥
     }
-    // 선미 트랜섬: 단면 폴리곤을 팬으로 닫는다
-    var P = section(1, -1), S = section(1, 1), center = [0, (sheerY(1) + keelY(1)) / 2, LEN / 2];
-    var ring = [P[1], P[2], P[3], P[4], P[5], S[4], S[3], S[2], S[1]];
-    for (var r = 0; r < ring.length - 1; r++) tri(center, ring[r], ring[r + 1], COL.hullB);
-    tri(center, S[1], P[1], COL.rim);
-
+    // 수판(竪板): 양끝 안쪽을 막는 세움판. 현측판 끝이 그 위로 솟아 갈라진 뱃머리 실루엣이 된다.
+    for (var e = 0; e < 2; e++) {
+        var ue = e ? 0.9 : 0.1, ze = -LEN / 2 + ue * LEN, hwE = halfWidth(ue) * 0.95;
+        var yLo = seamY(ue) - 0.1, yHi = sheerY(ue) - 0.25;
+        quad([-hwE, yLo, ze], [hwE, yLo, ze], [hwE, yHi, ze], [-hwE, yHi, ze], COL.plankB);
+    }
     var geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     return new THREE.Mesh(geo, mat(0xffffff, { vertexColors: true }));
 }
 
-function buildSailRig(): THREE.Group {
+function buildPlatform(): THREE.Group {
     var g = new THREE.Group();
-    g.position.set(0, 0, MAST_Z);
-    // 돛: 가로 8 × 세로 BATTENS 분할 평면. 정점 y/z 는 updateSail 이 매 프레임 다시 쓴다.
-    var geo = new THREE.PlaneGeometry(SAIL_W, 1, 8, BATTENS);
-    sailMesh = new THREE.Mesh(geo, mat(COL.sail, { roughness: 1 }));
-    sailMesh.position.z = 0.25; // 돛대 바로 뒤에 걸린다
-    g.add(sailMesh);
-    // 배튼(하활·활대 포함 BATTENS+1 개)
-    var bGeo = new THREE.BoxGeometry(SAIL_W + 0.3, 0.09, 0.09);
-    var bMat = mat(COL.batten);
-    for (var i = 0; i <= BATTENS; i++) {
-        var b = new THREE.Mesh(bGeo, bMat);
-        b.position.z = 0.25;
-        if (i === 0 || i === BATTENS) b.scale.set(1.08, 1.8, 1.8); // 하활·활대는 굵게
+    // 가로보 4개 — 두 선체 바깥 뱃전까지 걸친다
+    for (var i = 0; i < 4; i++) {
+        var b = box(2 * (HULL_X + HB) + 0.3, 0.16, 0.2, COL.beam);
+        b.position.set(0, DECK_Y - 0.1, -3.3 + i * 2.2);
         g.add(b);
-        battenMeshes.push(b);
+    }
+    // 갑판 판자 (선체 사이 + 안쪽 뱃전 위로 살짝 걸침)
+    var PLANKS = 7, span = 7.0, pw = span / PLANKS;
+    for (var p = 0; p < PLANKS; p++) {
+        var d = box(2 * (HULL_X - HB * 0.55), 0.07, pw * 0.94, (p & 1) ? COL.deckA : COL.deckB);
+        d.position.set(0, DECK_Y, -span / 2 + pw * (p + 0.5));
+        g.add(d);
     }
     return g;
 }
 
-function buildOar(): THREE.Group {
-    // 선미 우현 조타 노: 회전축(뱃전 고정점) 기준으로 아래·뒤로 뻗는다
+function buildSailRig(): THREE.Group {
     var g = new THREE.Group();
-    g.position.set(halfWidth(0.93) * 0.95, sheerY(0.93), LEN / 2 * 0.86);
-    // 길이 L 막대를 a 만큼 아래로 기울여 고정점에서 뒤·아래로. 수면 아래는 clipping 으로 잘린다.
-    var L = 4.6, a = 0.95, sa = Math.sin(a), ca = Math.cos(a);
-    var shaft = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, L), mat(COL.mast));
-    shaft.position.set(0, -sa * L / 2, ca * L / 2);
-    shaft.rotation.x = a;
-    g.add(shaft);
-    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, 1.4), mat(COL.mast));
-    blade.position.set(0, -sa * (L - 0.6), ca * (L - 0.6));
-    blade.rotation.x = a;
-    g.add(blade);
+    g.position.set(0, 0, MAST_Z);
+    // 거적돛: 가로 6 × 세로 SAIL_ROWS. 행마다 색을 번갈아 엮음 띠 표현. 정점 y/z 는 updateSail 이 갱신.
+    var geo = new THREE.PlaneGeometry(SAIL_W, 1, 6, SAIL_ROWS).toNonIndexed();
+    var posA = geo.attributes.position as THREE.BufferAttribute;
+    var cols = new Float32Array(posA.count * 3), ca = new THREE.Color(COL.matA), cb = new THREE.Color(COL.matB);
+    for (var f = 0; f < posA.count / 3; f++) {
+        // 삼각형 무게중심 y(-0.5~0.5) → 행 번호 → 색
+        var cy = (posA.getY(f * 3) + posA.getY(f * 3 + 1) + posA.getY(f * 3 + 2)) / 3 + 0.5;
+        var cc = ((cy * SAIL_ROWS) | 0) & 1 ? ca : cb;
+        for (var k = 0; k < 3; k++) { cols[(f * 3 + k) * 3] = cc.r; cols[(f * 3 + k) * 3 + 1] = cc.g; cols[(f * 3 + k) * 3 + 2] = cc.b; }
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    // 원래 v(0=위,1=아래)를 보존해 updateSail 에서 재사용
+    var vs = new Float32Array(posA.count), xs = new Float32Array(posA.count);
+    for (var i = 0; i < posA.count; i++) { vs[i] = 0.5 - posA.getY(i); xs[i] = posA.getX(i); }
+    geo.userData = { v: vs, x: xs };
+    sailMesh = new THREE.Mesh(geo, mat(0xffffff, { vertexColors: true, roughness: 1 }));
+    sailMesh.position.z = 0.2; // 돛대 바로 뒤
+    g.add(sailMesh);
+    yard = box(SAIL_W + 0.6, 0.14, 0.14, COL.mast);
+    boom = box(SAIL_W + 0.4, 0.12, 0.12, COL.mast);
+    yard.position.z = boom.position.z = 0.2;
+    boom.position.y = BOOM_Y;
+    g.add(yard, boom);
     return g;
 }
 
-function buildSailor(): THREE.Group {
-    // 선미에서 노를 잡은 사공 (몸통 박스 + 머리)
+function buildPerson(clothHex: number, torsoH: number): { g: THREE.Group; torso: THREE.Group } {
     var g = new THREE.Group();
-    var body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.95, 0.35), mat(COL.cloth));
-    body.position.y = 0.48;
-    var head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.3, 0.28), mat(COL.skin));
-    head.position.y = 1.12;
-    g.add(body, head);
-    g.position.set(halfWidth(0.88) * 0.45, sheerY(0.88) - 0.32, LEN / 2 * 0.76);
+    var torso = new THREE.Group();     // 허리 기준 회전(노 젓는 몸짓)
+    var body = box(0.42, torsoH, 0.3, clothHex);
+    body.position.y = torsoH / 2;
+    var head = box(0.26, 0.28, 0.26, COL.skin);
+    head.position.y = torsoH + 0.17;
+    var hair = box(0.28, 0.1, 0.28, 0x1e1a16);   // 상투/머리
+    hair.position.y = torsoH + 0.33;
+    torso.add(body, head, hair);
+    g.add(torso);
+    return { g, torso };
+}
+
+// 노꾼 + 노 (우현 기준으로 만들고 좌현은 부모 scale.x = -1 로 미러)
+function buildRowerSide(): THREE.Group {
+    var side = new THREE.Group();
+    for (var i = 0; i < ROWER_Z.length; i++) {
+        var z = ROWER_Z[i], u = (z + LEN / 2) / LEN;
+        var person = buildPerson(i & 1 ? COL.cloth : COL.clothDark, 0.62);
+        person.g.position.set(HULL_X - 0.1, seamY(u) + 0.05, z);
+        side.add(person.g);
+        // 노: 바깥 뱃전 고정점에서 바깥(+X)·아래로. 손잡이는 안쪽 1m.
+        var oar = new THREE.Group();
+        oar.rotation.order = 'YZX';
+        oar.position.set(HULL_X + halfWidth(u), sheerY(u) + 0.05, z);
+        var shaft = box(4.4, 0.07, 0.07, COL.mast);
+        shaft.position.x = 1.2;
+        var blade = box(0.9, 0.04, 0.26, COL.mast);
+        blade.position.x = 3.1;
+        oar.add(shaft, blade);
+        side.add(oar);
+        rowers.push({ oar, torso: person.torso, phase: i * 0.15 });
+    }
+    return side;
+}
+
+function buildSteering(): THREE.Group {
+    // 우현 선체 선미 바깥쪽 조타 노 + 선 채로 잡은 키잡이
+    var g = new THREE.Group();
+    var u = 0.88, z = -LEN / 2 + u * LEN;
+    steerOar = new THREE.Group();
+    steerOar.position.set(HULL_X + halfWidth(u) * 0.95, sheerY(u), z);
+    var L = 4.4, a = 0.95, sa = Math.sin(a), ca = Math.cos(a);
+    var shaft = box(0.13, 0.13, L, COL.mast);
+    shaft.position.set(0, -sa * L / 2, ca * L / 2);
+    shaft.rotation.x = a;
+    var blade = box(0.07, 0.55, 1.3, COL.mast);
+    blade.position.set(0, -sa * (L - 0.6), ca * (L - 0.6));
+    blade.rotation.x = a;
+    steerOar.add(shaft, blade);
+    g.add(steerOar);
+    var helm = buildPerson(COL.clothDark, 0.95);
+    helm.g.position.set(HULL_X, seamY(u) - 0.05, z - 0.6);
+    g.add(helm.g);
     return g;
+}
+
+function buildStays(): THREE.LineSegments {
+    // 돛대 지삭: 꼭대기 → 양 선체 뱃머리/선미
+    var top = [0, DECK_Y + MAST_H, MAST_Z], pts: number[] = [];
+    var ends = [[HULL_X, sheerY(0.06), -LEN / 2 + 0.06 * LEN], [-HULL_X, sheerY(0.06), -LEN / 2 + 0.06 * LEN],
+                [HULL_X, sheerY(0.94), -LEN / 2 + 0.94 * LEN], [-HULL_X, sheerY(0.94), -LEN / 2 + 0.94 * LEN]];
+    for (var i = 0; i < ends.length; i++) pts.push(top[0], top[1], top[2], ends[i][0], ends[i][1], ends[i][2]);
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: COL.rope, clippingPlanes: [waterPlane] }));
 }
 
 function build() {
     built = true;
     boatScene.add(sunLight, sunLight.target, ambient, root);
     root.rotation.order = 'YXZ';
-    root.add(buildHull());
 
-    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.16, MAST_H, 6), mat(COL.mast));
+    var hullGeoMesh = buildHull();
+    var hullS = hullGeoMesh, hullP = new THREE.Mesh(hullGeoMesh.geometry, hullGeoMesh.material);
+    hullS.position.x = HULL_X;
+    hullP.position.x = -HULL_X;
+    root.add(hullS, hullP, buildPlatform());
+
+    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, MAST_H, 6), mat(COL.mast));
     mast.position.set(0, DECK_Y + MAST_H / 2, MAST_Z);
-    root.add(mast);
+    root.add(mast, buildStays());
 
     sailRig = buildSailRig();
     root.add(sailRig);
-    oar = buildOar();
-    root.add(oar);
-    root.add(buildSailor());
+
+    var starboard = buildRowerSide();
+    var port = buildRowerSide();
+    port.scale.x = -1;
+    root.add(starboard, port, buildSteering());
 
     // 배 뒤 약간 위. pitch 는 메인 카메라(coords.ts applyCameraToThree)와 같게 → 수평선 일치.
-    boatCam.position.set(0, 7.0, 21);
+    boatCam.position.set(0, 6.2, 19);
     boatCam.rotation.set(-0.05, 0, 0);
 }
 
@@ -193,11 +279,10 @@ function relWind() {
     return { s: fx * rx + fy * ry, c: fx * hx + fy * hy };
 }
 
-function updateSail(t: number) {
+function updateSail(t: number, rw: { s: number; c: number }) {
     sailDisp += (boat.sail - sailDisp) * 0.12;
     var h = SAIL_FURL_H + (SAIL_H - SAIL_FURL_H) * sailDisp;
 
-    var rw = relWind();
     var theta = Math.abs(Math.atan2(rw.s, rw.c));          // 0 = 맞바람, π = 순풍
     // 활대 각: 순풍이면 가로(0), 옆바람일수록 바람 쪽 끝을 앞으로 돌린다 (최대 ~70°).
     var brace = Math.min(1.2, (Math.PI - theta) * 0.6);
@@ -206,25 +291,34 @@ function updateSail(t: number) {
 
     // 배부름: 바람세기·돛 높이 비례, 맞바람(IRONS)이면 펄럭임
     var irons = sailState.mode === 'IRONS';
-    var fill = Math.min(1, wind.speedMS / 8) * sailDisp * (irons ? 0.15 : 0.7);
+    var fill = Math.min(1, wind.speedMS / 8) * sailDisp * (irons ? 0.15 : 0.8);
     var flutter = irons ? 0.12 * sailDisp : 0;
 
     var pos = sailMesh.geometry.attributes.position as THREE.BufferAttribute;
     var arr = pos.array as Float32Array;
+    var ud = sailMesh.geometry.userData as { v: Float32Array; x: Float32Array };
     for (var i = 0; i < pos.count; i++) {
-        var x = arr[i * 3];
-        var v = (i / 9 | 0) / BATTENS;                     // PlaneGeometry 행: 0 = 위
-        var xn = x / SAIL_W + 0.5;
+        var v = ud.v[i], xn = ud.x[i] / SAIL_W + 0.5;
         arr[i * 3 + 1] = BOOM_Y + h * (1 - v);
-        arr[i * 3 + 2] = -fill * Math.sin(Math.PI * xn) * (0.6 + 0.4 * Math.sin(Math.PI * v))
+        arr[i * 3 + 2] = -fill * Math.sin(Math.PI * xn) * (0.5 + 0.5 * Math.sin(Math.PI * v))
             + flutter * Math.sin(t * 9 + xn * 7 + v * 3);
     }
     pos.needsUpdate = true;
     sailMesh.geometry.computeBoundingSphere();
-    for (var b = 0; b <= BATTENS; b++) {
-        var bv = b / BATTENS;
-        battenMeshes[b].position.y = BOOM_Y + h * bv;
-        battenMeshes[b].position.z = 0.25 - fill * (0.6 + 0.4 * Math.sin(Math.PI * bv));
+    yard.position.y = BOOM_Y + h;
+}
+
+function updateRowers() {
+    rowBlend += (boat.row - rowBlend) * 0.08;
+    if (rowBlend > 0.01) rowPhase += 0.15;
+    for (var i = 0; i < rowers.length; i++) {
+        var r = rowers[i], p = rowPhase + r.phase;
+        // 젓기: 앞으로 뻗어 물에 꽂고(catch) 뒤로 당긴 뒤(sin>0 구간 = 물속) 들어 올려 되돌린다.
+        // 쉼: 노를 뒤로 눕혀 들어 올린 상태.
+        var sweep = 0.45 * Math.cos(p), drop = 0.32 + 0.14 * Math.sin(p);
+        r.oar.rotation.y = -1.15 + (sweep + 1.15) * rowBlend;
+        r.oar.rotation.z = 0.2 + (-drop - 0.2) * rowBlend;
+        r.torso.rotation.x = 0.3 * Math.cos(p) * rowBlend;
     }
 }
 
@@ -233,7 +327,8 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     if (!built) build();
     var t = wave.time;
 
-    // 너울: 2D DrawBoat 와 같은 위상식. heave(m) + 파향 성분별 pitch/roll + 바람 쪽 반대로 기울기(heel).
+    // 너울: 2D DrawBoat 와 같은 위상식. heave(m) + 파향 성분별 pitch/roll + 바람 반대쪽 기울기(heel).
+    // 쌍동선이라 단동선보다 heel 이 작다.
     var sw = wave.swell;
     var phase = boat.gx * sw.dx + boat.gy * sw.dy + t * sw.speed;
     var heave = Math.sin(phase) * sw.amp * WAVE_AMP_TO_M;
@@ -243,14 +338,15 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     var hx = -Math.sin(boat.angle), hy = -Math.cos(boat.angle);
     var along = wdx * hx + wdy * hy, across = wdx * -hy + wdy * hx;
     var rw = relWind();
-    var heel = (rw.s >= 0 ? 1 : -1) * 0.07 * sailDisp * Math.min(1.5, wind.speedMS / 8);
+    var heel = (rw.s >= 0 ? 1 : -1) * 0.035 * sailDisp * Math.min(1.5, wind.speedMS / 8);
     root.position.y = heave;
     root.rotation.x = 0.05 * slope * along;
-    root.rotation.z = 0.08 * slope * across + heel;
+    root.rotation.z = 0.05 * slope * across + heel;
     waterPlane.constant = -heave;
 
-    updateSail(t);
-    oar.rotation.y += (-boat.rudder * 0.5 - oar.rotation.y) * 0.2;
+    updateSail(t, rw);
+    updateRowers();
+    steerOar.rotation.y += (-boat.rudder * 0.5 - steerOar.rotation.y) * 0.2;
 
     // 메인 씬 조명을 배 좌표계(선수 = -Z)로 회전해 복사
     _sunDir.copy(rig.sunLight.position).sub(rig.sunLight.target.position).normalize()

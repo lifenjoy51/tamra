@@ -1,5 +1,5 @@
 // sail.ts — 돛 polar + AoA 모드 + 선체 ground velocity 합성
-import { boat, wind, sail, current, ship, BASE_SAIL_SPEED } from '../state';
+import { boat, wind, sail, current, ship, BASE_SAIL_SPEED, ROW_SPEED } from '../state';
 
 // 선수와 바람이 불어오는 방향 사이 각 (0 = 맞바람, π = 순풍).
 // boat.angle 은 반시계 증가(π/2 = 서, moveBoat 전진 = (-sin, -cos)), wind.angleRad 는 나침반 방위
@@ -33,14 +33,16 @@ export function computeSail() {
     sail.windFactor = wf;
 }
 
-// 선체 속도 합성: 돛 추진 + 해류 drift → ground velocity
+// 선체 속도 합성: 돛 + 노 추진 + 해류 drift → ground velocity
 export function updateShipSpeed() {
     // boat.sail: 0(접음)/0.5(절반)/1(완전). 면적 비례 추진력 → 선형 scale.
     var sMS = sail.polar * sail.windFactor * BASE_SAIL_SPEED * boat.sail;
     ship.sailMS = sMS;
-    // 돛 추진: 선수 방향. boat.angle 0=북 기준 세계좌표 벡터 (-sin, -cos)
-    var sVx = -Math.sin(boat.angle) * sMS;
-    var sVy = -Math.cos(boat.angle) * sMS;
+    ship.rowMS = boat.row ? ROW_SPEED : 0;
+    ship.waterMS = sMS + ship.rowMS;
+    // 돛+노 추진: 선수 방향. boat.angle 0=북 기준 세계좌표 벡터 (-sin, -cos)
+    var sVx = -Math.sin(boat.angle) * ship.waterMS;
+    var sVy = -Math.cos(boat.angle) * ship.waterMS;
     // 해류: flow direction (sin, -cos)
     var cVx =  Math.sin(current.angleRad) * current.speedMS;
     var cVy = -Math.cos(current.angleRad) * current.speedMS;
