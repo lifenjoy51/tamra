@@ -71,6 +71,12 @@ python3 generate_maps.py
 | `render/minimap.ts` | DrawMinimap + mmState.stride |
 | `render/boat-sprite.ts` | DrawBoat + boatSprite.img |
 | `render/skymap.ts` | DrawSkyMap (K 토글, polar azimuthal) |
+| `render3d/index.ts` | three.js lowpoly 렌더 오케스트레이션 (init3D/Draw3D, `uiFlags.render3d` 기본 on, WebGL 실패 시 2D 폴백) |
+| `render3d/{renderer,coords,terrain-mesh,sky3d,celestial}.ts` | 씬/카메라, 월드↔씬 좌표(1 unit = 1 world px, 높이 ×V_EXAG), 지형 청크, 스카이돔·안개, 태양/달 조명 |
+| `render3d/water.ts` | 메인 바다 (너울+교차 너울, 지평선 반사, 태양 반짝임 — 정점색) |
+| `render3d/boat3d.ts` | 방(舫) 쌍동선 뷰모델 — 미터 단위 전용 씬·카메라로 메인 렌더 위에 겹침 (돛·노꾼·조타 노·등불) |
+| `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클 |
+| `render3d/weather3d.ts` | 뷰모델 씬 비/눈 3D 파티클 |
 | `input.ts` | initInput + inputState.{rotStep, moveStep} |
 | `audio.ts` | Web Audio 절차생성 (audio 싱글톤, initAudio/resumeAudio/setMuted/updateAudio/flapBurst/uiBlip) |
 | `debug.ts` | initDebugHooks (window.__* 전부 여기에) |
@@ -105,11 +111,13 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 
 ### 항해 시스템 (sail-based propulsion)
 
-배는 돛으로 추진된다. **W/S로 돛을 내리고/올리면** `boat.sailUp` 토글, 매 프레임 자동 추진. A/D는 키 1회=1 step 회전.
+배는 돛과 노로 추진된다. **W/S로 돛을 한 단계씩** (`boat.sail` 0/0.5/1, 시작은 0=DOWN), **R(櫓 버튼)로 노 젓기** (`boat.row`, 바람 무관 `ROW_SPEED` 1.2 m/s) 토글. A/D는 키(`boat.rudder`)를 단계 조정, 회전은 대수속력 `ship.waterMS`(돛+노) 비례로 점진 적용.
+
+- **각도 규약 주의**: `boat.angle` 은 반시계 증가(π/2 = 서, 전진 = `(-sin, -cos)`), `wind.angleRad`·해류·천체 방위는 나침반(시계 증가, π/2 = 동). 선수 방위 = `-boat.angle` — 상대풍은 `physics/sail.ts` `windAoA()` 사용
 
 - **돛 polar curve** ([src/physics/sail.ts](src/physics/sail.ts) `polarFor`): IRONS(0.05) / CLOSE(0.55) / BEAM(1.00) / BROAD(1.20) / RUN(0.90)
 - **추진 속도** (`computeSail` + `updateShipSpeed`): `BASE_SAIL_SPEED(4 m/s) × polar × windFactor(wind/8, clamp 0.3~1.8)`
-- **해류 drift**: 돛 추진 벡터 + 해류 벡터 = `ship.groundMS` / `ship.groundDirRad`
+- **해류 drift**: 돛+노 추진 벡터 + 해류 벡터 = `ship.groundMS` / `ship.groundDirRad`
 - **3x3 shore buffer**: 이동 대상 셀과 주변 8방향이 모두 바다여야 진입 허용
 - **서브스텝 이동**: `SUBSTEPS = ceil(mvLen*4)` — 큰 step에서도 중간 셀 체크 누락 방지
 - **카메라 = 배에 snap**: smoothing/spring-arm 제거. `camera.x/y/angle = boat.*` 직접 대입
