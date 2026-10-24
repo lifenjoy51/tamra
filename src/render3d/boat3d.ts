@@ -9,7 +9,8 @@
 // 덮어 잠긴 부분을 가리고, 흔들림도 그 수면을 샘플링한다. 돛 높이(boat.sail)·활대 각(상대풍)·키(boat.rudder)·
 // 노(boat.row) 반영 + 항적·뱃머리 물보라·노 물보라.
 import * as THREE from 'three';
-import { boat, wind, wave, ship, sail as sailState } from '../state';
+import { boat, wind, wave, ship, sun, sail as sailState } from '../state';
+import { oarSplash } from '../audio';
 import { SCR_W, SCR_H } from '../config';
 import type { CelestialRig } from './celestial';
 import { buildWeather3D, updateWeather3D } from './weather3d';
@@ -50,6 +51,9 @@ let sailMesh: THREE.Mesh;
 let yard: THREE.Mesh;
 let boom: THREE.Mesh;
 let steerOar: THREE.Group;
+let lanternLight: THREE.PointLight;
+let lanternMat: THREE.MeshStandardMaterial;
+let lanternOn = 0;
 interface Rower { oar: THREE.Group; torso: THREE.Group; phase: number; wasIn: boolean; }
 const rowers: Rower[] = [];
 let sailDisp = 0;                   // 화면상 돛 높이 비율 (boat.sail 로 부드럽게 수렴)
@@ -235,6 +239,21 @@ function buildSteering(): THREE.Group {
     return g;
 }
 
+// 갑판 선미 쪽 기둥에 건 등불 — 해 지면 켜진다 (점광원 + 발광 상자)
+function buildLantern(): THREE.Group {
+    var g = new THREE.Group();
+    g.position.set(0.6, DECK_Y, 3.3);
+    var post = box(0.08, 1.6, 0.08, COL.mast);
+    post.position.y = 0.8;
+    lanternMat = mat(0x3a2a1a, { emissive: new THREE.Color(0xffb060), emissiveIntensity: 0 });
+    var lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), lanternMat);
+    lamp.position.y = 1.45;
+    lanternLight = new THREE.PointLight(0xffb060, 0, 16, 2);
+    lanternLight.position.y = 1.45;
+    g.add(post, lamp, lanternLight);
+    return g;
+}
+
 function buildStays(): THREE.LineSegments {
     // 돛대 지삭: 꼭대기 → 양 선체 뱃머리/선미
     var top = [0, DECK_Y + MAST_H, MAST_Z], pts: number[] = [];
@@ -270,7 +289,7 @@ function build() {
     var starboard = buildRowerSide();
     var port = buildRowerSide();
     port.scale.x = -1;
-    root.add(starboard, port, buildSteering());
+    root.add(starboard, port, buildSteering(), buildLantern());
 
     // 배 뒤 약간 위. pitch 는 메인 카메라(coords.ts applyCameraToThree)와 같게 → 수평선 일치.
     boatCam.position.set(0, 6.2, 19);
@@ -329,6 +348,7 @@ function updateRowers() {
         // 노깃이 물에 들어가는 순간(catch) 물보라
         var isIn = rowBlend > 0.5 && Math.sin(p) > 0;
         if (isIn && !r.wasIn) {
+            if (i === 0) oarSplash();     // 같은 박자 노꾼들 — 소리는 한 번
             r.oar.updateWorldMatrix(true, false);
             _tip.set(3.3, 0, 0);
             r.oar.localToWorld(_tip);   // 씬 좌표 = 파티클 좌표계
@@ -411,6 +431,11 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     bf.far = fs > 0 ? 25 + 400 * (1 - fs) * (1 - fs) : 2e4;
     bf.near = bf.far * 0.15;
     steerOar.rotation.y += (-boat.rudder * 0.5 - steerOar.rotation.y) * 0.2;
+    // 등불: 해가 -2° 아래로 지면 서서히 켜지고 불꽃처럼 일렁인다
+    lanternOn += ((sun.altDeg < -2 ? 1 : 0) - lanternOn) * 0.05;
+    var flick = 0.85 + 0.15 * Math.sin(t * 23) * Math.sin(t * 7.3);
+    lanternLight.intensity = lanternOn * flick * 6;
+    lanternMat.emissiveIntensity = lanternOn * flick * 2.5;
 
     // 메인 씬 조명을 배 좌표계(선수 = -Z)로 회전해 복사
     _sunDir.copy(rig.sunLight.position).sub(rig.sunLight.target.position).normalize()

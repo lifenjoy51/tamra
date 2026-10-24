@@ -105,7 +105,8 @@ export function updateCelestialRig(rig: CelestialRig, camPos: THREE.Vector3) {
     }
     rig.sunLight.position.copy(camPos).addScaledVector(lightDir, 500);
     rig.sunLight.target.position.copy(camPos);
-    rig.ambient.intensity = (0.25 + 0.35 * dayT) * (1 + 0.45 * cloud) * Math.PI;
+    // 밤 ambient 는 낮게 — 달빛(직사광)·등불이 드러나고 바다가 하늘보다 밝게 뜨지 않게. 낮(dayT=1)은 0.6 그대로.
+    rig.ambient.intensity = (0.12 + 0.48 * dayT) * (1 + 0.45 * cloud) * Math.PI;
     rig.ambient.color.copy(AMB_CLEAR).lerp(AMB_CLOUD, cloud);
 
     rig.sunSprite.visible = sun.altDeg > -3;
