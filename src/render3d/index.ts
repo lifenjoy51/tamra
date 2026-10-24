@@ -1,11 +1,12 @@
 // index.ts — render3d 오케스트레이션. main.ts 에서 init3D() 1회 + Draw3D() 매 프레임 호출.
 import * as THREE from 'three';
-import { scene, camera3d, canvas3d, initRenderer, Render3D } from './renderer';
+import { scene, camera3d, canvas3d, renderer, initRenderer, Render3D } from './renderer';
 import { setSceneOrigin, applyCameraToThree } from './coords';
 import { updateTerrainChunks } from './terrain-mesh';
 import { buildWaterMesh, updateWaterMesh } from './water';
 import { buildSkyDome, updateSkyDome } from './sky3d';
 import { buildCelestialRig, updateCelestialRig } from './celestial';
+import { renderBoat3D } from './boat3d';
 import { boat } from '../state';
 
 let waterMesh: THREE.Mesh;
@@ -51,6 +52,7 @@ export function Draw3D(): boolean {
     updateSkyDome(skyDome, fog);
     updateCelestialRig(rig, camera3d.position);
     Render3D();
+    renderBoat3D(renderer!, rig, camera3d.rotation.y);
     return true;
 }
 
