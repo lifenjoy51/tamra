@@ -34,7 +34,7 @@ export const input = {
 // --- UI flags ---
 // K 키 / ★ 버튼 = skyMapOn (하늘보기: 시간 정지 + polar azimuthal 뷰).
 // i 버튼 = debugVisible (디버그 패널 + 미니맵 show/hide. localStorage 로 영속).
-export const uiFlags = { skyMapOn: false, debugVisible: true };
+export const uiFlags = { skyMapOn: false, debugVisible: true, render3d: true };
 
 // --- Wind (풍향) ---
 // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람

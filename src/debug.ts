@@ -5,7 +5,7 @@ import {
     boat, ship, camera,
     wind, sail, current, wave, weather,
     sun, moonState,
-    timeRef,
+    timeRef, uiFlags,
 } from './state';
 import { altitude, colormap } from './tiles';
 import { STARS, starState } from './astronomy/stars';
@@ -41,4 +41,9 @@ export function initDebugHooks() {
     w.__setTimeSpeed = function (s) { timeRef.TIME_SPEED = s; };
     w.__setGameTime = function (ms) { timeRef.gameTime = ms; };
     w.__getGameTime = function () { return timeRef.gameTime; };
+    // lowpoly 3D 렌더러 토글 (PoC) — window.__render3d() 로 on/off, window.__render3d(true/false) 로 지정
+    w.__render3d = function (v) {
+        uiFlags.render3d = v === undefined ? !uiFlags.render3d : !!v;
+        return uiFlags.render3d;
+    };
 }

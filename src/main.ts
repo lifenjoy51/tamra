@@ -34,7 +34,7 @@ import { DrawVerticalLine, Render, PX_PER_RAD_H } from './render/voxel';
 import { DrawBackground } from './render/background';
 import { UpdateCamera, moveBoat } from './render/camera';
 import { drawNearFog, drawPrecipitation, drawLightning } from './render/effects';
-import { DrawMinimap, mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
+import { DrawMinimap, initMinimapOverlay, setMinimapVisible, mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
 import { DrawBoat, initBoatSprite, boatSprite } from './render/boat-sprite';
 import { DrawSkyMap } from './render/skymap';
 import { updateAudio } from './audio';
@@ -45,6 +45,7 @@ import { initToggleUI, updateToggleUI } from './ui/toggle';
 import { initDebugPanel } from './ui/debug-panel';
 import { showStartMenu } from './ui/start-menu';
 import { initDebugHooks } from './debug';
+import { init3D, Draw3D, canvas3d } from './render3d/index';
 
 (async function () {
 
@@ -89,8 +90,12 @@ camera.angle = boat.angle;
 
 computeSun();
 computeWind();
+// 시작 메뉴에서 대기한 실제 시간(수초~수분)이 dtMs 로 들어가면 TIME_SPEED 배속과 곱해져
+// 첫 프레임에 배가 순식간에 먼 바다로 순간이동해버린다 — 메뉴 종료 시점으로 리셋.
+frameStats.lastMoveTime = Date.now();
 
 initInput();
+initMinimapOverlay();
 initRudderUI();
 initSailUI();
 initToggleUI();
@@ -133,19 +138,35 @@ function Draw(now) {
     var frameStart = performance.now();
     UpdateCamera();
     wave.time += 0.04;
-    DrawBackground();
-    Render();
-    drawNearFog();
-    drawPrecipitation();
-    drawLightning();
-    updateAudio();
-    // 미니맵은 디버그 패널과 연동 — 패널 숨기면 미니맵도 숨김.
+    if (uiFlags.render3d && uiFlags.skyMapOn) {
+        // 하늘보기는 2D 캔버스(ctx)에 그리는 오버레이 — 3D 모드에선 2D 캔버스를 비우고 단독으로 띄운다.
+        canvas3d.style.display = 'none';
+        canvas.style.display = 'block';
+        ctx.clearRect(0, 0, SCR_W, SCR_H);
+        DrawSkyMap();
+    } else if (uiFlags.render3d && Draw3D()) {
+        canvas.style.display = 'none';
+        canvas3d.style.display = 'block';
+    } else {
+        // render3d 꺼짐 또는 WebGL 초기화 실패 → 2D voxel 폴백 (실패 시 플래그도 내려 매 프레임 재시도 방지).
+        uiFlags.render3d = false;
+        canvas3d.style.display = 'none';
+        canvas.style.display = 'block';
+        DrawBackground();
+        Render();
+        drawNearFog();
+        drawPrecipitation();
+        drawLightning();
+        DrawBoat();
+        DrawSkyMap();
+    }
+    // 미니맵은 디버그 패널과 연동(패널 숨기면 미니맵도 숨김) — 2D/3D 어느 렌더러든 오버레이로 표시.
+    setMinimapVisible(uiFlags.debugVisible);
     if (uiFlags.debugVisible) DrawMinimap();
-    DrawBoat();
+    updateAudio();
     updateRudderUI();
     updateSailUI();
     updateToggleUI();
-    DrawSkyMap();
     var frameDur = performance.now() - frameStart;
     // EMA alpha=0.1 — 약 10프레임 윈도우
     frameStats.frameTimeEma = frameStats.frameTimeEma === 0 ? frameDur : frameStats.frameTimeEma * 0.9 + frameDur * 0.1;
