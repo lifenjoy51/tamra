@@ -193,6 +193,9 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 | `FRAME_INTERVAL` | 50 | 20fps cap |
 | `BASE_SAIL_SPEED` | 4 m/s | 돛 100% + windFactor 1 기준 |
 | `timeRef.TIME_SPEED` | 120 (초기) | 시간 가속 (T/Y로 1~7200) |
+| `EYE_HEIGHT_M` (render3d/coords) | 2.6 m | 3D 시점 = 선미 갑판 키잡이 눈높이 (배 뷰모델 카메라와 공유) |
+| `FOV_V` (render3d/renderer) | 50° | 3D 세로 시야각 (16:9 가로 ≈ 80°) |
+| `V_EXAG` (render3d/coords) | 1 | 3D 높이 과장 없음 + `applyCurvature` 지구 곡률 (수평선 ~5.8km) |
 
 ### Render() 최적화 메모 ([src/render/voxel.ts](src/render/voxel.ts))
 

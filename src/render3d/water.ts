@@ -1,7 +1,7 @@
 // water.ts — 청록 lowpoly 바다 평면 + 정점 흔들림 (state.wave swell 재사용) + 정점색 하늘 반사·태양 반짝임.
 import * as THREE from 'three';
 import { wave, weather } from '../state';
-import { metersToSceneY } from './coords';
+import { metersToSceneY, applyCurvature } from './coords';
 
 const SIZE_SCENE = 2000;  // 커버 범위 (scene unit ≈ world px, 지형 청크 반경 camera.distance(800)*2 + 여유)
 const SEGMENTS = 160;
@@ -38,6 +38,7 @@ export function buildWaterMesh(): THREE.Mesh {
         metalness: 0.05,
         flatShading: true,
     });
+    applyCurvature(mat);
     return new THREE.Mesh(geo, mat);
 }
 

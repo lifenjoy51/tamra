@@ -118,7 +118,8 @@ export function buildFoam(): THREE.Points {
     foamGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
     foamGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 4));
     var mat = new THREE.PointsMaterial({
-        size: 0.38, sizeAttenuation: true, vertexColors: true, transparent: true, depthWrite: false,
+        size: 3, sizeAttenuation: false,   // 화면 px 고정 — 1인칭이라 발밑 거품이 거대 사각형이 되지 않게
+        vertexColors: true, transparent: true, depthWrite: false,
     });
     var pts = new THREE.Points(foamGeo, mat);
     pts.frustumCulled = false;

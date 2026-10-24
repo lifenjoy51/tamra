@@ -8,7 +8,7 @@ import { SEA, MASK, SHIFT, TILE_SIZE, BUF_TILES } from '../config';
 import { camera as gcam } from '../state';
 import { altitude, slotTiles } from '../tiles';
 import { heightMeters } from '../terrain';
-import { worldToScene, metersToSceneY } from './coords';
+import { worldToScene, metersToSceneY, applyCurvature } from './coords';
 
 const STRIDE = 4;          // 월드 px 샘플 간격
 const CHUNK = 64;          // 청크 한 변 (world px). TILE_SIZE(512) 약수 → 청크는 항상 타일 1개 안에 들어간다.
@@ -50,6 +50,7 @@ const material = new THREE.MeshStandardMaterial({
     roughness: 1.0,
     metalness: 0.0,
 });
+applyCurvature(material);
 
 interface Chunk {
     mesh: THREE.Mesh | null; // 전부 바다면 null (그릴 삼각형 없음)

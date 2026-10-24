@@ -14,7 +14,10 @@ export const scene = new THREE.Scene();
 // 그 자리에 스카이돔(수평선색)이 비쳐 보이는 버그가 있었다 — 훨씬 작게 잡는다.
 // near/far 비가 8만배라 선형 depth 로는 원거리 해안선(물 평면 ↔ 수중 지형)이 z-fight →
 // logarithmicDepthBuffer 로 보정.
-export const camera3d = new THREE.PerspectiveCamera(70, SCR_W / SCR_H, 0.05, 4000);
+// FOV: 세로 50° (16:9 에서 가로 ≈ 80°). 70° 는 광각 왜곡으로 섬·산이 실제보다 작고 멀어 보였다.
+// 눈높이 2.6m = 0.0065 unit 라 near 도 그보다 훨씬 작게(0.001 = 0.4m).
+export const FOV_V = 50;
+export const camera3d = new THREE.PerspectiveCamera(FOV_V, SCR_W / SCR_H, 0.001, 4000);
 
 // 성공 시 true. 실패(WebGL 미지원 등)하면 false — 호출 측이 2D 로 폴백.
 export function initRenderer(): boolean {

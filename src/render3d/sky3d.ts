@@ -49,6 +49,7 @@ const FOG_DAY = new THREE.Color().setRGB(200 / 255, 200 / 255, 205 / 255, THREE.
 const FOG_DUSK = new THREE.Color().setRGB(140 / 255, 130 / 255, 130 / 255, THREE.SRGBColorSpace);
 const FOG_NIGHT = new THREE.Color().setRGB(30 / 255, 34 / 255, 44 / 255, THREE.SRGBColorSpace);
 const FLASH = new THREE.Color().setRGB(0.95, 0.95, 1.0);
+const HAZE_FAR = 250;
 
 // 0(맑음) ~ 1(짙은 안개). 2D 와 같은 임계값(FOG_VIS_THRESHOLD) 아래에서 증가.
 export function fogStrength(): number {
@@ -69,9 +70,10 @@ export function updateSkyDome(mesh: THREE.Mesh, fog: THREE.Fog, flash: number) {
         pal.horizon.lerp(FLASH, flash);
         pal.zenith.lerp(FLASH, flash);
     }
+    // 해상 연무: 맑은 날 ~100km 에서 완전히 묻힌다 (scene unit = 400m). 시정 나쁘면 수 km 까지.
     var vis = weather.visibilityCoef;
-    fog.far = 1900 * Math.max(0.03, Math.min(1, vis * vis));
-    fog.near = fog.far * 0.1;
+    fog.far = HAZE_FAR * Math.max(0.012, Math.min(1, vis * vis));
+    fog.near = fog.far * 0.04;
     var geo = mesh.geometry as THREE.BufferGeometry;
     var pos = geo.attributes.position as THREE.BufferAttribute;
     var col = geo.attributes.color as THREE.BufferAttribute;

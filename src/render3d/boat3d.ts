@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import { boat, wind, wave, ship, sun, sail as sailState } from '../state';
 import { oarSplash } from '../audio';
 import { SCR_W, SCR_H } from '../config';
+import { FOV_V } from './renderer';
+import { EYE_HEIGHT_M, CAM_PITCH } from './coords';
 import type { CelestialRig } from './celestial';
 import { buildWeather3D, updateWeather3D } from './weather3d';
 import { fogStrength } from './sky3d';
@@ -27,7 +29,8 @@ const MAST_H = 9;
 const SAIL_W = 5.0;
 const SAIL_H = 5.6;        // 완전히 올렸을 때 돛 높이
 const SAIL_FURL_H = 0.3;   // 내렸을 때 활대-하활 간격(말아 묶은 거적 두께)
-const BOOM_Y = DECK_Y + 1.25;
+const BOOM_Y = DECK_Y + 2.0;       // 하활이 키잡이 눈높이(EYE_HEIGHT_M) 위 — 돛 아래로 수평선이 보인다
+const HELM_Z = 4.4;                // 키잡이(=카메라)가 선 선미 갑판 위치
 const SAIL_ROWS = 12;      // 거적 엮음 띠 수
 const ROWER_Z = [-3.2, -0.4, 2.4];
 
@@ -40,7 +43,8 @@ const COL = {
 };
 
 const boatScene = new THREE.Scene();
-const boatCam = new THREE.PerspectiveCamera(70, SCR_W / SCR_H, 0.1, 300);
+// 키잡이 1인칭: 메인 카메라와 같은 FOV·pitch·눈높이 → 두 씬의 원근·수평선 일치
+const boatCam = new THREE.PerspectiveCamera(FOV_V, SCR_W / SCR_H, 0.05, 300);
 const sunLight = new THREE.DirectionalLight(0xfff2d8, 1);
 const ambient = new THREE.AmbientLight(0x8899aa, 1);
 
@@ -136,17 +140,17 @@ function buildHull(): THREE.Mesh {
 
 function buildPlatform(): THREE.Group {
     var g = new THREE.Group();
-    // 가로보 4개 — 두 선체 바깥 뱃전까지 걸친다
-    for (var i = 0; i < 4; i++) {
+    // 가로보 5개 — 두 선체 바깥 뱃전까지 걸친다 (마지막은 키잡이 자리·조타 노 받침)
+    for (var i = 0; i < 5; i++) {
         var b = box(2 * (HULL_X + HB) + 0.3, 0.16, 0.2, COL.beam);
-        b.position.set(0, DECK_Y - 0.1, -3.3 + i * 2.2);
+        b.position.set(0, DECK_Y - 0.1, -3.3 + i * 2.0);
         g.add(b);
     }
-    // 갑판 판자 (선체 사이 + 안쪽 뱃전 위로 살짝 걸침)
-    var PLANKS = 7, span = 7.0, pw = span / PLANKS;
+    // 갑판 판자 (선체 사이 + 안쪽 뱃전 위로 살짝 걸침). z -3.5 ~ 4.9
+    var PLANKS = 9, z0 = -3.5, span = 8.4, pw = span / PLANKS;
     for (var p = 0; p < PLANKS; p++) {
         var d = box(2 * (HULL_X - HB * 0.55), 0.07, pw * 0.94, (p & 1) ? COL.deckA : COL.deckB);
-        d.position.set(0, DECK_Y, -span / 2 + pw * (p + 0.5));
+        d.position.set(0, DECK_Y, z0 + pw * (p + 0.5));
         g.add(d);
     }
     return g;
@@ -219,11 +223,10 @@ function buildRowerSide(): THREE.Group {
 }
 
 function buildSteering(): THREE.Group {
-    // 우현 선체 선미 바깥쪽 조타 노 + 선 채로 잡은 키잡이
+    // 갑판 선미 중앙 가로보에 건 조타 노 — 두 선체 사이로 내려간다. 키잡이는 카메라(=플레이어)라 몸은 없음.
     var g = new THREE.Group();
-    var u = 0.88, z = -LEN / 2 + u * LEN;
     steerOar = new THREE.Group();
-    steerOar.position.set(HULL_X + halfWidth(u) * 0.95, sheerY(u), z);
+    steerOar.position.set(0, DECK_Y, HELM_Z + 0.5);
     var L = 4.4, a = 0.95, sa = Math.sin(a), ca = Math.cos(a);
     var shaft = box(0.13, 0.13, L, COL.mast);
     shaft.position.set(0, -sa * L / 2, ca * L / 2);
@@ -233,24 +236,17 @@ function buildSteering(): THREE.Group {
     blade.rotation.x = a;
     steerOar.add(shaft, blade);
     g.add(steerOar);
-    var helm = buildPerson(COL.clothDark, 0.95);
-    helm.g.position.set(HULL_X, seamY(u) - 0.05, z - 0.6);
-    g.add(helm.g);
     return g;
 }
 
-// 갑판 선미 쪽 기둥에 건 등불 — 해 지면 켜진다 (점광원 + 발광 상자)
+// 돛대 뒷면(키잡이 쪽)에 건 등불 — 해 지면 켜진다 (점광원 + 발광 상자)
 function buildLantern(): THREE.Group {
     var g = new THREE.Group();
-    g.position.set(0.6, DECK_Y, 3.3);
-    var post = box(0.08, 1.6, 0.08, COL.mast);
-    post.position.y = 0.8;
+    g.position.set(0, DECK_Y + 1.7, MAST_Z + 0.22);
     lanternMat = mat(0x3a2a1a, { emissive: new THREE.Color(0xffb060), emissiveIntensity: 0 });
-    var lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), lanternMat);
-    lamp.position.y = 1.45;
+    var lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), lanternMat);
     lanternLight = new THREE.PointLight(0xffb060, 0, 16, 2);
-    lanternLight.position.y = 1.45;
-    g.add(post, lamp, lanternLight);
+    g.add(lamp, lanternLight);
     return g;
 }
 
@@ -291,9 +287,9 @@ function build() {
     port.scale.x = -1;
     root.add(starboard, port, buildSteering(), buildLantern());
 
-    // 배 뒤 약간 위. pitch 는 메인 카메라(coords.ts applyCameraToThree)와 같게 → 수평선 일치.
-    boatCam.position.set(0, 6.2, 19);
-    boatCam.rotation.set(-0.05, 0, 0);
+    // 선미 갑판에 선 키잡이 눈. 높이는 매 프레임 heave 를 따라간다(평행이동만 — 수평선은 안 움직임).
+    boatCam.position.set(0, EYE_HEIGHT_M, HELM_Z);
+    boatCam.rotation.set(CAM_PITCH, 0, 0);
 }
 
 // 상대풍: 바람이 불어오는 방향을 배 기준으로. s>0 = 우현에서, c>0 = 선수 쪽에서.
@@ -416,6 +412,7 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     pitchS += (Math.atan2(hb - hs, zs - zb) - pitchS) * 0.3;
     rollS  += (Math.atan2(hr - hp, 2 * HULL_X) - rollS) * 0.3;   // +z 회전 = 우현이 올라감
     root.position.y = heaveS;
+    boatCam.position.y = EYE_HEIGHT_M + heaveS;
     root.rotation.x = pitchS;
     root.rotation.z = rollS + heel;
 

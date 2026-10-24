@@ -27,7 +27,7 @@ export function init3D(): boolean {
 
     setSceneOrigin(boat.gx, boat.gy);
 
-    fog = new THREE.Fog(0x223344, 200, 1900);
+    fog = new THREE.Fog(0x223344, 10, 250);   // near/far 는 updateSkyDome 이 시정에 맞춰 매 프레임 갱신
     scene.fog = fog;
 
     skyDome = buildSkyDome(scene);

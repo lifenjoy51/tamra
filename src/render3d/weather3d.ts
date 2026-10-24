@@ -35,7 +35,7 @@ export function buildWeather3D(scene: THREE.Scene) {
     var sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
     snowPts = new THREE.Points(sg, new THREE.PointsMaterial({
-        color: 0xf4f6ff, size: 0.11, sizeAttenuation: true, transparent: true, opacity: 0.9, depthWrite: false,
+        color: 0xf4f6ff, size: 2, sizeAttenuation: false, transparent: true, opacity: 0.9, depthWrite: false,
     }));
     rainLines.frustumCulled = snowPts.frustumCulled = false;
     rainLines.renderOrder = snowPts.renderOrder = 3;
