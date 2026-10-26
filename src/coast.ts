@@ -122,3 +122,23 @@ export function coastNormalAt(gx: number, gy: number) {
     landNormal.distM = -dM;
     return landNormal;
 }
+
+// 반경 radiusPx 안에서 가장 가까운 육지 꼭짓점 (2px 간격 성긴 탐색): 거리(m)와 그쪽 단위벡터(월드 동·남).
+// 없으면 distM = Infinity. 바닷새 등 "뭍이 어느 쪽인가" 단서용 — 호출 측에서 간헐적으로만 부를 것.
+export const nearestLand = { distM: Infinity, e: 0, s: 0 };
+export function findNearestLand(gx: number, gy: number, radiusPx: number) {
+    var x0 = Math.round(gx), y0 = Math.round(gy), best = radiusPx * radiusPx, bx = 0, by = 0, found = false;
+    for (var dy = -radiusPx; dy <= radiusPx; dy += 2) {
+        if (dy * dy >= best) continue;
+        for (var dx = -radiusPx; dx <= radiusPx; dx += 2) {
+            var d2 = dx * dx + dy * dy;
+            if (d2 >= best) continue;
+            if (altAt(x0 + dx, y0 + dy) > SEA) { best = d2; bx = dx; by = dy; found = true; }
+        }
+    }
+    if (!found) { nearestLand.distM = Infinity; return nearestLand; }
+    var l = Math.sqrt(best) || 1;
+    nearestLand.distM = l * RENDER_UNIT_M;
+    nearestLand.e = bx / l; nearestLand.s = by / l;
+    return nearestLand;
+}

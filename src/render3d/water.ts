@@ -1,7 +1,8 @@
 // water.ts — 청록 lowpoly 바다 평면 + 정점 흔들림 (state.wave swell 재사용) + 정점색 하늘 반사·태양 반짝임.
 import * as THREE from 'three';
 import { wave, weather } from '../state';
-import { metersToSceneY, applyCurvature } from './coords';
+import { metersToSceneY, applyCurvature, sceneOrigin } from './coords';
+import { seaTint, Rgb } from './sea-tint';
 
 const SIZE_SCENE = 2000;  // 커버 범위 (scene unit ≈ world px, 지형 청크 반경 camera.distance(800)*2 + 여유)
 const SEGMENTS = 160;
@@ -15,7 +16,22 @@ const WAVE_AMP_TO_M = 0.25;
 const X_ROT = 0.7, X_K = 1 / 1.5, X_AMP = 0.45, X_SPEED = 0.8;
 // 하늘 반사(프레넬 근사): 거리가 멀수록(시선이 수면에 누울수록) 지평선 색으로. 근거리는 물색 유지.
 const REFL_NEAR = 30, REFL_FAR = 900, REFL_MAX = 0.7;
-const BASE = new THREE.Color(0x2a8f8a);
+// 정점별 물빛(sea-tint) — 메시가 CELL 단위로 스냅 이동할 때만 다시 계산
+const tc: Rgb = { r: 0, g: 0, b: 0 };
+let tintOx = NaN, tintOz = NaN, tintAge = 0;
+function tintFor(mesh: THREE.Mesh, ox: number, oz: number, n: number): Float32Array {
+    var t = mesh.geometry.userData.tint as Float32Array;
+    if (!t) t = mesh.geometry.userData.tint = new Float32Array(n * 3);
+    // 타일이 늦게 로드되는 경우를 위해 ~5초마다도 다시
+    if (ox === tintOx && oz === tintOz && ++tintAge < 100) return t;
+    tintOx = ox; tintOz = oz; tintAge = 0;
+    var arr = (mesh.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+    for (var i = 0; i < n; i++) {
+        seaTint(arr[i * 3] + ox + sceneOrigin.gx, arr[i * 3 + 2] + oz + sceneOrigin.gy, tc);
+        t[i * 3] = tc.r; t[i * 3 + 1] = tc.g; t[i * 3 + 2] = tc.b;
+    }
+    return t;
+}
 
 export function buildWaterMesh(): THREE.Mesh {
     var geo = new THREE.PlaneGeometry(SIZE_SCENE, SIZE_SCENE, SEGMENTS, SEGMENTS);
@@ -70,7 +86,8 @@ export function updateWaterMesh(mesh: THREE.Mesh, cam: THREE.Vector3, sunDir: TH
     // 태양 반짝임 강도: 낮 + 맑음 + 태양이 수평선 위
     var glint = sunDir.y > 0 ? sunStrength * (1 - weather.cloudiness * 0.85) : 0;
     var camY = cam.y, lx0 = cam.x - originX, lz0 = cam.z - originZ;
-    var bR = BASE.r, bG = BASE.g, bB = BASE.b, hR = horizon.r, hG = horizon.g, hB = horizon.b;
+    var hR = horizon.r, hG = horizon.g, hB = horizon.b;
+    var tint = tintFor(mesh, originX, originZ, pos.count);
     var sR = sunColor.r * glint, sG = sunColor.g * glint, sB = sunColor.b * glint;
 
     for (var i = 0; i < pos.count; i++) {
@@ -82,6 +99,7 @@ export function updateWaterMesh(mesh: THREE.Mesh, cam: THREE.Vector3, sunDir: TH
         arr[i * 3 + 1] = y;
 
         var f = refl[i];
+        var bR = tint[i * 3], bG = tint[i * 3 + 1], bB = tint[i * 3 + 2];
         var r = bR + (hR - bR) * f, g = bG + (hG - bG) * f, b = bB + (hB - bB) * f;
         if (glint > 0) {
             // 카메라→정점 시선을 수면(+Y 법선)에 반사 = (vx, -vy, vz). 태양 방향과의 정렬도.

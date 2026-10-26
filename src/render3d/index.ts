@@ -7,6 +7,7 @@ import { buildWaterMesh, updateWaterMesh } from './water';
 import { buildSkyDome, updateSkyDome } from './sky3d';
 import { buildCelestialRig, updateCelestialRig } from './celestial';
 import { renderBoat3D } from './boat3d';
+import { buildClouds, updateClouds } from './clouds3d';
 import { lightningStrength } from '../render/effects';
 import { boat } from '../state';
 
@@ -38,6 +39,7 @@ export function init3D(): boolean {
     scene.add(waterMesh);
 
     rig = buildCelestialRig(scene);
+    buildClouds(scene);
     return true;
 }
 
@@ -53,6 +55,7 @@ export function Draw3D(): boolean {
     var flash = lightningStrength();
     updateSkyDome(skyDome, fog, flash);
     updateCelestialRig(rig, camera3d.position);
+    updateClouds(camera3d);
     rig.ambient.intensity += flash * 6 * Math.PI;   // 번개: 순간 전방위 조명
     _sunDir.copy(rig.sunLight.position).sub(rig.sunLight.target.position).normalize();
     // 반짝임 세기: 태양광 세기(π 단위)를 0~1 로. 지평선색 = fog 색(updateSkyDome 이 설정).

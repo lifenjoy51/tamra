@@ -79,7 +79,12 @@ python3 generate_maps.py
 | `render3d/boat3d.ts` | 단동 목선 뷰모델 (`boat.png` 형태 — 넓은 둥근 선체·5칸 활대 거적돛·선미 중앙 키) — 미터 단위 전용 씬·추적 카메라로 메인 렌더 위에 겹침 (노꾼은 노 저을 때만·등불) |
 | `render3d/boat-water.ts` | 뷰모델 씬의 실제 스케일 국소 바다(seaHeight) + 항적/물보라 파티클. 뷰모델 씬은 깊이 없이 겹치므로 해안 70m 안에선 지형 위 패치를 녹이고 파티클을 지운다 |
 | `render3d/weather3d.ts` | 뷰모델 씬 비/눈 3D 파티클 |
+| `render3d/clouds3d.ts` | 3D 구름 빌보드(InstancedMesh): 상층풍으로 흘러가는 4km 격자 × `skyAt` 구름량 (별·해·달을 가림, 저기압·전선이 수평선부터 다가옴) + 낮(9~18시)에 땅 위에 서는 지형 적운(높이 비례, 바람 불어가는 쪽으로 밀림) — 수평선 너머 섬의 단서 |
+| `render3d/birds3d.ts` | 바닷새 (뷰모델 씬): 뭍 30km 안·낮에만, 가까울수록 많다. 아침엔 뭍 반대, 저녁엔 뭍 쪽으로 난다 (`coast.findNearestLand`, 2초마다) |
+| `render3d/sea-tint.ts` | 물빛: 수심(`seaDepthM`)·해역 → 대양(흑조) 남색 / 대륙붕 청록 / 연안 초록 / 황해·서해 탁한 펄물. 메인 바다 정점색·국소 바다 패치 공용 |
 | `input.ts` | initInput + inputState.{rotStep, moveStep} |
+| `ui/sounding.ts` | 납추 측심 (L / 測): 수심(길 = 2.4m, 줄 예순 길) + 바닥 흙(해역·수심·해안 — 서해 펄, 제주 현무암 자갈·검은 모래 …), 빠르게 달리면 줄이 끌려 깊게 읽힘 |
+| `ui/toast.ts` | 화면 위 가운데 관찰 알림 `showToast` |
 | `audio.ts` | Web Audio 절차생성 (audio 싱글톤, initAudio/resumeAudio/setMuted/updateAudio/flapBurst/uiBlip) |
 | `debug.ts` | initDebugHooks (window.__* 전부 여기에) |
 | `ui/toggle.ts` | i(디버그 패널+미니맵, **기본 꺼짐** — 좌표·방위는 개발용, `tamra_debug_visible_v2`) / ★ / 櫓 / 音. Time ×2 컨트롤은 플레이어용이라 상시 노출 |

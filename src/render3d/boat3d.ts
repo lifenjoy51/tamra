@@ -16,8 +16,9 @@ import { FOV_V } from './renderer';
 import { VIEW_HEIGHT_M, CAM_PITCH, chase } from './coords';
 import type { CelestialRig } from './celestial';
 import { buildWeather3D, updateWeather3D } from './weather3d';
+import { buildBirds, updateBirds } from './birds3d';
 import { fogStrength } from './sky3d';
-import { updateLocalSea, seaHeight, buildSeaPatch, updateSeaPatch, buildFoam, spawnFoam, updateFoam } from './boat-water';
+import { updateLocalSea, seaHeight, buildSeaPatch, updateSeaPatch, buildFoam, spawnFoam, updateFoam, FRAME_DT } from './boat-water';
 
 // 배 로컬 좌표: +X = 우현, +Y = 위, -Z = 선수 (three 카메라 기본 forward 와 같은 방향).
 const LEN = 11;            // 선체 길이(m)
@@ -305,6 +306,7 @@ function build() {
     seaPatch = buildSeaPatch();
     boatScene.add(sunLight, sunLight.target, ambient, root, seaPatch, buildFoam());
     buildWeather3D(boatScene);
+    buildBirds(boatScene);
     boatScene.fog = new THREE.Fog(0xffffff, 1e4, 2e4);
     root.rotation.order = 'YXZ';
 
@@ -447,6 +449,7 @@ export function renderBoat3D(renderer: THREE.WebGLRenderer, rig: CelestialRig, c
     speedDisp += (ship.waterMS - speedDisp) * 0.05;
     var v = speedDisp;
     updateLocalSea(v);
+    updateBirds(FRAME_DT);
     // 흔들림: 선수/선미/좌우 현 수면 높이 → heave·pitch·roll.
     // 관성 smoothing 으로 짧은 잔물결엔 덜 반응. 바람 반대쪽 기울기(heel)는 단동선보다 작게.
     var zb = -LEN / 2 + 1.5, zs = LEN / 2 - 1.5;

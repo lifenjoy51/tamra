@@ -5,6 +5,7 @@
 //
 // 시간은 게임 배속과 무관한 실시간(프레임당 FRAME_DT) — 120배속으로 물결/항적이 흐르면 알아볼 수 없다.
 import * as THREE from 'three';
+import { seaTint, Rgb } from './sea-tint';
 import { boat, wave, ship } from '../state';
 import { terrainHeightM } from '../coast';
 import { RENDER_UNIT_M } from '../config';
@@ -105,10 +106,20 @@ export function terrainAtBoat(x: number, z: number): number {
 const LAND_MASK_M = 70;
 let masked = false;
 
+const tint: Rgb = { r: 0, g: 0, b: 0 };
+let tintR = -1, tintG = -1, tintB = -1;
+
 export function updateSeaPatch(mesh: THREE.Mesh) {
     var pos = mesh.geometry.attributes.position as THREE.BufferAttribute;
     var col = mesh.geometry.attributes.color as THREE.BufferAttribute;
     var arr = pos.array as Float32Array, carr = col.array as Float32Array;
+    // 국소 바다 색 = 배 위치 물빛 (메인 바다와 같은 sea-tint)
+    seaTint(boat.gx, boat.gy, tint);
+    if (Math.abs(tint.r - tintR) + Math.abs(tint.g - tintG) + Math.abs(tint.b - tintB) > 0.004) {
+        tintR = tint.r; tintG = tint.g; tintB = tint.b;
+        for (var j = 0; j < pos.count; j++) { carr[j * 4] = tintR; carr[j * 4 + 1] = tintG; carr[j * 4 + 2] = tintB; }
+        col.needsUpdate = true;
+    }
     var mask = ship.nearLandM < LAND_MASK_M;
     for (var i = 0; i < pos.count; i++) {
         if (alphaOf[i] <= 0) continue;   // 완전 투명 테두리는 갱신 생략

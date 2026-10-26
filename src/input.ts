@@ -4,6 +4,7 @@
 // A/D 는 즉시 각도를 바꾸지 않고 boat.rudder 만 조정 — 실제 회전은 UpdateCamera 에서
 // rudder × waterMS × RUDDER_POWER × dt 로 서서히 적용.
 import { TIME_SPEED_MIN, TIME_SPEED_MAX } from './config';
+import { dropLead } from './ui/sounding';
 import { boat, timeRef, uiFlags, RUDDER_STEP } from './state';
 import { mmState, MM_STRIDE_MIN, MM_STRIDE_MAX } from './render/minimap';
 import { audio, resumeAudio, setMuted, uiBlip } from './audio';
@@ -71,6 +72,9 @@ export function initInput() {
                 break;
             case 75: // 'K' : 별자리 전체 뷰 토글
                 uiFlags.skyMapOn = !uiFlags.skyMapOn;
+                break;
+            case 76: // 'L' : 납추 측심
+                dropLead();
                 break;
             case 77: // 'M' : 음소거 토글
                 setMuted(!audio.muted);

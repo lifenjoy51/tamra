@@ -42,6 +42,7 @@ import { initInput, inputState } from './input';
 import { initRudderUI, updateRudderUI } from './ui/rudder';
 import { initSailUI, updateSailUI } from './ui/sail';
 import { initToggleUI, updateToggleUI } from './ui/toggle';
+import { initSoundingUI } from './ui/sounding';
 import { initDebugPanel } from './ui/debug-panel';
 import { showStartMenu } from './ui/start-menu';
 import { initDebugHooks } from './debug';
@@ -98,6 +99,7 @@ initMinimapOverlay();
 initRudderUI();
 initSailUI();
 initToggleUI();
+initSoundingUI();
 initDebugPanel();
 initDebugHooks();
 

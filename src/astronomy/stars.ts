@@ -95,7 +95,7 @@ export function skyLimitMag(): number {
     var dark = -sun.altDeg / 18; if (dark < 0) dark = 0; else if (dark > 1) dark = 1;
     var lim = 1 + 5 * dark;
     if (moonState.altRad > 0) lim -= 1.8 * moonState.illumination * Math.min(1, moonState.altRad / 0.3);
-    return lim - 3 * weather.cloudiness;
+    return lim - 1.5 * weather.cloudiness;   // 구름 덩어리 자체가 별을 가리므로(3D) 여기선 옅은 박무만
 }
 
 // 별 하나의 밝기(0~1.2): 등급(√flux 근사) × 한계등급 페이드 × 지평선 소광
