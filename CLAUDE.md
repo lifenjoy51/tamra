@@ -52,13 +52,13 @@ python3 generate_maps.py
 | `config.ts` | 상수 (SCR_W, SEA, TILE_SIZE, WORLD_* 등) |
 | `state.ts` | mutable 싱글톤 모음 (boat/ship/camera/wind/sail/current/wave/weather/sun/moonState/timeRef/frameStats/uiFlags) |
 | `canvas.ts` | canvas/ctx/buf32/buf8/imagedata + fitCanvas + PX_SCALE |
-| `tiles.ts` | 타일 로더, altitude/colormap 링버퍼, slotTiles |
+| `tiles.ts` | 타일 로더, altitude/colormap 링버퍼, slotTiles, `depthU8`(바다 원본 고도 = 수심 — altitude 는 바다를 SEA 로 평탄화) |
 | `terrain.ts` | generateColormap + piecewise heightMeters LUT |
-| `coast.ts` | 연속 해안 필드 — `coastL`(육지/바다 bilinear, 충돌용) / `coastDistM`(부호 거리) / `terrainHeightM`(해식 절벽 보정 높이). 배 충돌·3D 근경 지형이 공유 → 보이는 해안선 = 막히는 해안선 |
+| `coast.ts` | 연속 해안 필드 — `coastL`(육지/바다 bilinear, 충돌용) / `coastDistM`(부호 거리) / `terrainHeightM`(해식 절벽 보정 높이) / `seaDepthM`(수심) / `isLandPx` / `coastNormalAt`. 배 충돌·3D 근경 지형이 공유 → 보이는 해안선 = 막히는 해안선 |
 | `physics/synoptic.ts` | 연속 기상장 (위경도·시간의 순수 함수): `windAt` = 기후풍(위도대 대순환 + 동아시아/남아시아 몬순 계절 보간) + 이동성 고·저기압(흘러가는 3D value noise 기압 편차 → 지균풍, 마찰 20°) + 태풍(7~10월 결정적 진로) + 돌풍. `skyAt` = 구름(기후 + 저기압 + 장마 전선 북상 + 태풍 + 국지 뭉게) / 강수 / 해무(4~7월 황해·동중국해 남풍) |
 | `physics/wind.ts` | 배 위치 `windAt` 샘플 → `wind.angleRad/speedMS/pressure/typhoonKm` |
 | `physics/sail.ts` | polarFor, computeSail, updateShipSpeed |
-| `physics/current.ts` | 적도류·쿠로시오·동호주 |
+| `physics/current.ts` | 해류 = 대양 배경 + 경로선 해류(쿠로시오·쓰시마·동한·제주·황해 난류, 중국 연안류 등 — 축에서 가우시안 감쇠, 계절 가중) + **조류**: 공조시도 기준점(M2 진폭·위상) 가우시안 보간 → 달(M2)·해(S2) 시간각으로 수위·조차(사리/조금), 정상파 근사(만조·간조 정조), 세기 ≈ 진폭·√(g/수심)·1.5, 밀물 방향 = 위상 기울기, 반경 60km 육지 방향 텐서로 해협·해안선 방향으로 꺾음 → `tide.*` |
 | `physics/waves.ts` | swell ← 16방위×4거리(300~1800km) '그때 그곳' 바람(군속도 35km/h 만큼 과거)의 배 쪽 성분 에너지, 사이 육지는 차폐 (10분마다, 시상수 3h). mid/ripple ← 국지풍 |
 | `physics/weather.ts` | 배 위치 `skyAt` 샘플 → cloudiness/visibility/precipitation/fog (+ `__cloudOverride`) |
 | `astronomy/sun.ts` | dayOfYear + δ/H → alt/az |
@@ -133,7 +133,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 |---|---|---|
 | **시간/태양** | `astronomy/sun.ts` computeSun | 위/경도 + dayOfYear → δ/H → alt/az. 게임 정오부터 시작 |
 | **바람** | `physics/wind.ts` computeWind | `synoptic.windAt` — 제주 겨울 북서 계절풍(평균 ~8m/s)·여름 남~남서풍, 저기압 통과 시 풍향이 서서히 돈다 (1분에 ~1°) |
-| **해류** | `physics/current.ts` computeCurrent | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
+| **해류·조류** | `physics/current.ts` computeCurrent | 경로선 해류 + 조류(물때) 합 → `current.*` (`streamMS` 해류만), `tide.heightM/rangeM/flowMS/depthM`. 제주해협은 동서, 서해 연안은 1~2 m/s |
 | **파도** | `physics/waves.ts` computeWaves | swell(← 먼 바다·과거 바람, `wave.swellFromRad/swellHs`) + mid/ripple(← 국지풍), 진폭=wind.speedMS/8 |
 | **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 → 고유운동·세차(476년) → GMST → LST → hour angle, 한계등급 페이드 + twinkle |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |

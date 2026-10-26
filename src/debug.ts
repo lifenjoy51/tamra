@@ -3,7 +3,7 @@
 // ex) window.__boat, window.__advanceHours(10), window.__setTimeSpeed(1) 등.
 import {
     boat, ship, camera,
-    wind, sail, current, wave, weather,
+    wind, sail, current, tide, wave, weather,
     sun, moonState,
     timeRef, uiFlags,
 } from './state';
@@ -21,6 +21,7 @@ export function initDebugHooks() {
     w.__wind = wind;
     w.__sail = sail;
     w.__current = current;
+    w.__tide = tide;
     w.__wave = wave;
     w.__weather = weather;
     w.__sun = sun;

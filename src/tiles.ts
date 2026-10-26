@@ -11,6 +11,10 @@ import { generateColormap } from './terrain';
 // 4096x4096 링 버퍼. 기본값 바다로 초기화.
 export const altitude = new Uint8Array(SIZE * SIZE);
 export const colormap = new Uint32Array(SIZE * SIZE);
+// 수심: 원본 고도 바이트(≤ SEA, 육지는 SEA). altitude 는 바다를 SEA 로 평탄화하므로 따로 보관 — 조류 세기·측심용.
+// 파일 없는 순수 바다 타일은 DEEP_U8(≈ -4400m).
+export const depthU8 = new Uint8Array(SIZE * SIZE);
+const DEEP_U8 = 12;
 altitude.fill(SEA);
 
 // 슬롯별 현재 로드된 tile key (tx_ty) — 중복 로드 방지
@@ -86,6 +90,7 @@ export async function loadTile(tx: number, ty: number): Promise<void> {
             for (var lx = 0; lx < TILE_SIZE; lx++) {
                 var h = heightRaw[src + lx];
                 altitude[dst + lx] = h <= SEA ? SEA : h;
+                depthU8[dst + lx] = h <= SEA ? (hasFile ? h : DEEP_U8) : SEA;
                 colormap[dst + lx] = tileCmap[src + lx];
             }
         }

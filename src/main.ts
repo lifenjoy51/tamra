@@ -8,7 +8,7 @@ import {
 import { canvas, ctx, imagedata, buf8, buf32 } from './canvas';
 import {
     boat, ship, camera, input, uiFlags,
-    wind, sail, current, wave, weather,
+    wind, sail, current, tide, wave, weather,
     sun, moonState,
     timeRef, frameStats,
     BASE_SAIL_SPEED, BASE_CAM_METERS, CAM_HEIGHT_MARGIN,
@@ -117,7 +117,8 @@ function UpdateDebug() {
 
     debugTextEl.textContent =
         'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
-        'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
+        'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s (해류 ' + current.streamMS.toFixed(2) + ')\n' +
+        'Tide:    ' + (tide.heightM >= 0 ? '+' : '') + tide.heightM.toFixed(2) + ' m  조차 ' + tide.rangeM.toFixed(1) + '/' + tide.springRangeM.toFixed(1) + ' m  조류 ' + tide.flowMS.toFixed(2) + ' m/s ' + (((tide.flowDirRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '°  수심 ' + (tide.depthM | 0) + 'm\n' +
         'Press:   ' + (wind.pressure >= 0 ? '+' : '') + wind.pressure.toFixed(1) + ' hPa' + (wind.typhoonKm < 3000 ? '  태풍 ' + (wind.typhoonKm | 0) + 'km' : '') + '\n' +
         'Swell:   from ' + (((wave.swellFromRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / Hs ' + wave.swellHs.toFixed(1) + ' m\n' +
         'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + (weather.fog > 0.05 ? ' / 해무 ' + (weather.fog * 100 | 0) + '%' : '') + '\n' +

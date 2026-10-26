@@ -84,12 +84,12 @@ export function UpdateCamera() {
     camera.angle = boat.angle;
 
     computeSun();
+    updateStars();      // 달 시간각 → 조류 위상 (computeCurrent 전에)
     computeWind();
     computeSail();
     computeCurrent();
     updateShipSpeed();
     computeWaves();
-    updateStars();
     computeWeather();
 
     // 이동: UNIT_M = 400 m/unit → units = m/s × gameSeconds / 400

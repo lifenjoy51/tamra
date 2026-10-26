@@ -49,7 +49,12 @@ export const wind = { angleRad: Math.PI / 4, speedMS: 8, pressure: 0, typhoonKm:
 export const sail = { polar: 1.0, mode: 'BEAM', windFactor: 1.0 };
 
 // --- Current (해류) ---
-export const current = { angleRad: 0, speedMS: 0 };
+// angleRad/speedMS: 해류 + 조류 합 (흘러가는 방위). streamMS: 해류(대양·경로선)만의 세기.
+export const current = { angleRad: 0, speedMS: 0, streamMS: 0 };
+// --- Tide (조석, 배 위치) ---
+// heightM: 평균 해면 대비 수위, rangeM: 오늘 조차(사리 크고 조금 작음), springRangeM: 사리 조차,
+// flowMS/flowDirRad: 조류 (밀물·썰물, 흘러가는 방위), depthM: 배 아래 수심
+export const tide = { heightM: 0, rangeM: 0, springRangeM: 0, flowMS: 0, flowDirRad: 0, depthM: 100 };
 
 // --- Wave ---
 export const wave = {

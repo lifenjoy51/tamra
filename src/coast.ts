@@ -6,7 +6,7 @@
 // 짧은 폭(W) 안에 솟게 재성형. B 가 낮으면(모래 해안) W 를 넓혀 완만한 해변으로 남긴다.
 // 해안 셀 테두리에서 |d| ≥ 141m(=400/2√2) 이고 W·RISE_W ≤ 140m 라 인접 순수 육지/바다 셀과 이어진다.
 import { SEA, MASK, SHIFT, RENDER_UNIT_M } from './config';
-import { altitude } from './tiles';
+import { altitude, depthU8 } from './tiles';
 import { heightMeters } from './terrain';
 
 export const SEA_FLOOR_M = -5;    // 바다 꼭짓점 높이 (terrain-mesh 원경과 동일)
@@ -95,4 +95,30 @@ export function nearLandM(gx: number, gy: number): number {
 // 셀 꼭짓점이 육지인가 (정수 좌표 근처 샘플, 너울 차폐·육지 탐색용)
 export function isLandPx(gx: number, gy: number): boolean {
     return altAt(Math.round(gx), Math.round(gy)) > SEA;
+}
+
+// 수심(m, 양수). 셀 꼭짓점 원본 고도의 bilinear — 육지 꼭짓점은 0m 로 친다.
+export function seaDepthM(gx: number, gy: number): number {
+    var x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0;
+    var i00 = ((y0 & MASK) << SHIFT) + (x0 & MASK), i10 = ((y0 & MASK) << SHIFT) + ((x0 + 1) & MASK);
+    var i01 = (((y0 + 1) & MASK) << SHIFT) + (x0 & MASK), i11 = (((y0 + 1) & MASK) << SHIFT) + ((x0 + 1) & MASK);
+    var d00 = -heightMeters[depthU8[i00]], d10 = -heightMeters[depthU8[i10]];
+    var d01 = -heightMeters[depthU8[i01]], d11 = -heightMeters[depthU8[i11]];
+    var d = (d00 * (1 - fx) + d10 * fx) * (1 - fy) + (d01 * (1 - fx) + d11 * fx) * fy;
+    return d > 0 ? d : 0;
+}
+
+// 해안 셀 안이면 육지 쪽 단위 법선 (∇L), 아니면 null 대신 길이 0 — 조류를 해안선 따라 흐르게 할 때 쓴다.
+export const landNormal = { x: 0, y: 0, distM: 1e9 };
+export function coastNormalAt(gx: number, gy: number) {
+    sample(gx, gy);
+    landNormal.x = 0; landNormal.y = 0; landNormal.distM = 1e9;
+    if (dM >= FAR || dM <= -FAR) return landNormal;
+    var e = 0.02;
+    var lx = coastL(gx + e, gy) - coastL(gx - e, gy), ly = coastL(gx, gy + e) - coastL(gx, gy - e);
+    var l = Math.hypot(lx, ly);
+    if (l > 1e-9) { landNormal.x = lx / l; landNormal.y = ly / l; }
+    sample(gx, gy);
+    landNormal.distM = -dM;
+    return landNormal;
 }
