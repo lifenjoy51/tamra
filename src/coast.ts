@@ -91,3 +91,8 @@ export function nearLandM(gx: number, gy: number): number {
     }
     return Math.max(0, Math.sqrt(best) - 0.5) * RENDER_UNIT_M;
 }
+
+// 셀 꼭짓점이 육지인가 (정수 좌표 근처 샘플, 너울 차폐·육지 탐색용)
+export function isLandPx(gx: number, gy: number): boolean {
+    return altAt(Math.round(gx), Math.round(gy)) > SEA;
+}

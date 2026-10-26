@@ -1,31 +1,23 @@
-// weather.ts — ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness/visibility/precipitation.
+// weather.ts — 배 위치의 하늘 (synoptic.ts 연속 기상장 샘플) → cloudiness/visibility/precipitation/fog.
 // __cloudOverride / __precipOverride / __precipTypeOverride 디버그 hook 보존.
-import { weather, sun } from '../state';
+import { weather, sun, timeRef } from '../state';
 import { WEATHER_DIURNAL_PHASE_HOURS, WEATHER_DIURNAL_AMP } from '../config';
+import { skyAt, SkySample } from './synoptic';
+
+const sk: SkySample = { cloud: 0, precip: 0, fog: 0 };
 
 export function computeWeather() {
-    var lat = sun.lat;
-    var a = Math.abs(lat);
-    var base = 0.2;
-    // ITCZ (적도 수렴대, 계절 shift)
-    var shift = 5 * Math.sin(2 * Math.PI * (sun.dayOfYear - 81) / 365);
-    if (Math.abs(lat - shift) < 10) base += 0.5;
-    // 중위도 폭풍대
-    if (a > 40 && a < 60) base += 0.3;
-    // 아열대 고기압대 (맑음)
-    if (a > 22 && a < 35) base -= 0.15;
-    // 결정적 noise (위치·날짜·년도)
-    var seed = (Math.floor(lat * 3) + Math.floor(sun.lon * 3) * 13 + Math.floor(sun.dayOfYear / 3) * 7 + sun.year * 29) >>> 0;
-    var n = ((seed * 2654435761) >>> 0) / 4294967295;
-    base += (n - 0.5) * 0.4;
+    var a = Math.abs(sun.lat);
+    skyAt(sun.lat, sun.lon, timeRef.gameTime / 3.6e6, sk);
     // 일변화 (낮 대류 증가)
-    base += Math.sin((sun.hourLocal - WEATHER_DIURNAL_PHASE_HOURS) * Math.PI / 12) * WEATHER_DIURNAL_AMP;
+    var base = sk.cloud + Math.sin((sun.hourLocal - WEATHER_DIURNAL_PHASE_HOURS) * Math.PI / 12) * WEATHER_DIURNAL_AMP;
     if (base < 0) base = 0; else if (base > 1) base = 1;
     weather.cloudiness = base;
-    weather.visibilityCoef = 1.0 - base * 0.5;
-    // 강수: cloudiness > 0.6 구간에서 선형 증가, 1.0까지. 위도 높으면 눈.
-    weather.precipitation = base > 0.6 ? (base - 0.6) / 0.35 : 0;
-    if (weather.precipitation > 1) weather.precipitation = 1;
+    weather.precipitation = sk.precip;
+    // 해무는 새벽에 짙고 한낮에 옅다
+    var fog = sk.fog * (0.75 + 0.25 * Math.cos((sun.hourLocal - 5) * Math.PI / 12));
+    weather.fog = fog;
+    weather.visibilityCoef = Math.min(1.0 - base * 0.5 - sk.precip * 0.2, 1 - 0.96 * fog);
     weather.precipType = (a > 45 || (a > 35 && sun.dayOfYear < 80) || (a > 35 && sun.dayOfYear > 300)) ? 'snow' : 'rain';
     if (typeof window.__cloudOverride === 'number') {
         weather.cloudiness = window.__cloudOverride;

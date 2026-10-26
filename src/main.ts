@@ -118,7 +118,9 @@ function UpdateDebug() {
     debugTextEl.textContent =
         'Wind:    ' + wDegStr + '° / ' + wind.speedMS.toFixed(1) + ' m/s\n' +
         'Cur:     ' + (((current.angleRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / ' + current.speedMS.toFixed(2) + ' m/s\n' +
-        'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + '\n' +
+        'Press:   ' + (wind.pressure >= 0 ? '+' : '') + wind.pressure.toFixed(1) + ' hPa' + (wind.typhoonKm < 3000 ? '  태풍 ' + (wind.typhoonKm | 0) + 'km' : '') + '\n' +
+        'Swell:   from ' + (((wave.swellFromRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '° / Hs ' + wave.swellHs.toFixed(1) + ' m\n' +
+        'Sky:     cloud ' + (weather.cloudiness * 100 | 0) + '% / vis ×' + weather.visibilityCoef.toFixed(2) + (weather.fog > 0.05 ? ' / 해무 ' + (weather.fog * 100 | 0) + '%' : '') + '\n' +
         'Sail:    ' + (boat.sail === 0 ? 'DOWN' : boat.sail === 0.5 ? 'HALF' : 'FULL') + ' ' + (sail.polar * 100 | 0) + '% ' + sail.mode + ' (w×' + sail.windFactor.toFixed(2) + ')' + (boat.row ? ' +ROW' : '') + '\n' +
         'Ship:    ' + (ship.groundMS * 3.6).toFixed(1) + ' km/h / ' + (((ship.groundDirRad * 180 / Math.PI) | 0) + 1000).toString().slice(1) + '°' +
             (ship.moveScale < timeRef.TIME_SPEED - 0.5 ? '  move×' + ship.moveScale.toFixed(ship.moveScale < 10 ? 1 : 0) + ' (해안 ' + (ship.nearLandM | 0) + 'm)' : '') + '\n' +

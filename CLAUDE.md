@@ -55,11 +55,12 @@ python3 generate_maps.py
 | `tiles.ts` | 타일 로더, altitude/colormap 링버퍼, slotTiles |
 | `terrain.ts` | generateColormap + piecewise heightMeters LUT |
 | `coast.ts` | 연속 해안 필드 — `coastL`(육지/바다 bilinear, 충돌용) / `coastDistM`(부호 거리) / `terrainHeightM`(해식 절벽 보정 높이). 배 충돌·3D 근경 지형이 공유 → 보이는 해안선 = 막히는 해안선 |
-| `physics/wind.ts` | Hadley/Ferrel/Polar + ITCZ + 몬순 |
+| `physics/synoptic.ts` | 연속 기상장 (위경도·시간의 순수 함수): `windAt` = 기후풍(위도대 대순환 + 동아시아/남아시아 몬순 계절 보간) + 이동성 고·저기압(흘러가는 3D value noise 기압 편차 → 지균풍, 마찰 20°) + 태풍(7~10월 결정적 진로) + 돌풍. `skyAt` = 구름(기후 + 저기압 + 장마 전선 북상 + 태풍 + 국지 뭉게) / 강수 / 해무(4~7월 황해·동중국해 남풍) |
+| `physics/wind.ts` | 배 위치 `windAt` 샘플 → `wind.angleRad/speedMS/pressure/typhoonKm` |
 | `physics/sail.ts` | polarFor, computeSail, updateShipSpeed |
 | `physics/current.ts` | 적도류·쿠로시오·동호주 |
-| `physics/waves.ts` | swell + mid + ripple (wind/current 기반) |
-| `physics/weather.ts` | cloudiness/visibility/precipitation (+ `__cloudOverride`) |
+| `physics/waves.ts` | swell ← 16방위×4거리(300~1800km) '그때 그곳' 바람(군속도 35km/h 만큼 과거)의 배 쪽 성분 에너지, 사이 육지는 차폐 (10분마다, 시상수 3h). mid/ripple ← 국지풍 |
+| `physics/weather.ts` | 배 위치 `skyAt` 샘플 → cloudiness/visibility/precipitation/fog (+ `__cloudOverride`) |
 | `astronomy/sun.ts` | dayOfYear + δ/H → alt/az |
 | `astronomy/stars.ts` | STARS(`star-catalog.ts` 5.5등급 ~2850개, d3-celestial/Hipparcos), updateStars — 고유운동 + 세차(IAU1976, 연도 바뀔 때 1회) + ΔT(→ planets/moon 호출), `skyLimitMag`/`starVisual`(어스름·달빛·구름 한계등급) |
 | `astronomy/planets.ts` | PLANETS + Meeus J2000 + Kepler, 황경 일반세차로 그 해 춘분점 기준 변환 |
@@ -131,13 +132,13 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 | 시스템 | 함수 | 모델 |
 |---|---|---|
 | **시간/태양** | `astronomy/sun.ts` computeSun | 위/경도 + dayOfYear → δ/H → alt/az. 게임 정오부터 시작 |
-| **바람** | `physics/wind.ts` computeWind | Hadley/Ferrel/Polar + ITCZ + 아시아 몬순 + 결정적 noise |
+| **바람** | `physics/wind.ts` computeWind | `synoptic.windAt` — 제주 겨울 북서 계절풍(평균 ~8m/s)·여름 남~남서풍, 저기압 통과 시 풍향이 서서히 돈다 (1분에 ~1°) |
 | **해류** | `physics/current.ts` computeCurrent | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
-| **파도** | `physics/waves.ts` computeWaves | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
+| **파도** | `physics/waves.ts` computeWaves | swell(← 먼 바다·과거 바람, `wave.swellFromRad/swellHs`) + mid/ripple(← 국지풍), 진폭=wind.speedMS/8 |
 | **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 → 고유운동·세차(476년) → GMST → LST → hour angle, 한계등급 페이드 + twinkle |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
 | **달** | `updateMoon`, `moonState` 위상·halo | Meeus 간이식 → λ/β. cloudiness > 0.3 시 halo 가산 |
-| **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef, precipitation(>0.6 임계), precipType(위도 기반 rain/snow) |
+| **날씨** | `computeWeather` | `synoptic.skyAt` → cloudiness, visibilityCoef(구름·비·해무), precipitation, fog, precipType(위도 기반 rain/snow) |
 | **대기광 / Halo** | `skyGlowX/Y` (separable), 태양 halo profile | 황혼 비대칭 붉은 띠(방위별), 태양 halo 고도별 반경·색 |
 | **구름** | `updateCloudMask`, `cloudAlphaAt`, `cloudFull` | 64×18 value noise → bilinear 업샘플 → `SCR_W×200` 풀버퍼(30s 게임시간마다 1회). `cloudi<0.15`면 sky fill 빠른 경로 |
 | **비/눈** | `drawPrecipitation`, `precipX/Y` | 300 스크린 공간 파티클, 바람 driftX + 중력 fallY. precipitation으로 active 수 조절 |

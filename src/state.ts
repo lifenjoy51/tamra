@@ -41,8 +41,8 @@ export const uiFlags = { skyMapOn: false, debugVisible: false, render3d: true };
 
 // --- Wind (풍향) ---
 // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
-// computeWind() 가 매 프레임 갱신
-export const wind = { angleRad: Math.PI / 4, speedMS: 8 };
+// computeWind() 가 매 프레임 갱신. pressure: 이동성 고·저기압 편차(hPa), typhoonKm: 가장 가까운 태풍 중심(km)
+export const wind = { angleRad: Math.PI / 4, speedMS: 8, pressure: 0, typhoonKm: 1e9 };
 
 // --- Sail (돛 효율) ---
 // boat.angle 과 wind.angleRad 의 상대각(AoA) → polar 계수
@@ -60,11 +60,15 @@ export const wave = {
     mid:    { dx: 0.25, dy:-0.18, speed: 1.5, amp: 1.2 },
     // 잔물결
     ripple: { dx: 0.60, dy: 0.45, speed: 2.3, amp: 0.4 },
+    // 너울 출처 (먼 바다·과거의 바람이 만든 것): 오는 방위(0=북, 시계), 유의파고(m)
+    swellFromRad: 0, swellHs: 0.5,
 };
 
 // --- Weather ---
+// fog: 해무 세기 (0~1, visibilityCoef 에 반영됨)
 export const weather = {
     cloudiness: 0.3,
+    fog: 0,
     visibilityCoef: 1.0,
     precipitation: 0,
     precipType: 'rain' as 'rain' | 'snow',
