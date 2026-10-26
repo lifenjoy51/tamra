@@ -77,7 +77,6 @@ var debugEl = document.getElementById('debug');
 var debugTextEl = document.getElementById('debug-text');
 var dbgTimeVal = document.getElementById('dbg-time-val');
 var dbgMapVal = document.getElementById('dbg-map-val');
-debugEl.style.display = 'block';
 
 // --- Boat (플레이어 조종 대상) ---
 // gx, gy는 글로벌 월드 좌표 (0~WORLD_W, 0~WORLD_H). tile init 이후 주입

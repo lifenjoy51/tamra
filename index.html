@@ -113,7 +113,7 @@
             line-height: inherit;
             color: inherit;
         }
-        /* Time / Map 인라인 컨트롤 (toggle-ui 안). 디버그 패널 열림일 때만 노출. */
+        /* Time / Map 인라인 컨트롤 (toggle-ui 안). Map 은 디버그 패널 열림일 때만 노출. */
         .dbg-inline-sep {
             width: 1px;
             align-self: stretch;
@@ -158,9 +158,11 @@
         .dbg-btn:active {
             background: rgba(200, 230, 255, 0.18);
         }
-        /* 디버그 꺼진 상태에선 인라인 컨트롤 숨김 */
+        /* 디버그 꺼진 상태에선 인라인 컨트롤 숨김 — 시간 가속(Time)은 플레이어 조작이라 상시 노출 */
         #toggle-ui .dbg-inline-row,
         #toggle-ui .dbg-inline-sep { display: none; }
+        #toggle-ui .dbg-inline-row.time-ctl { display: flex; }
+        #toggle-ui .dbg-inline-sep.time-ctl { display: block; }
         #toggle-ui.debug-on .dbg-inline-row { display: flex; }
         #toggle-ui.debug-on .dbg-inline-sep { display: block; }
         #canvas-wrap {
@@ -346,8 +348,8 @@
     <div id="gameui"></div>
     <div id="toggle-ui">
         <button class="btn-toggle" id="btn-debug" title="디버그 패널">i</button>
-        <div class="dbg-inline-sep"></div>
-        <div class="dbg-inline-row">
+        <div class="dbg-inline-sep time-ctl"></div>
+        <div class="dbg-inline-row time-ctl">
             <span class="dbg-label">Time</span>
             <span class="dbg-val" id="dbg-time-val"></span>
             <button class="dbg-btn" data-act="time-down" title="시간 감속">÷2</button>

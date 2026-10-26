@@ -16,7 +16,9 @@ export function computeSun() {
     var dayOfYear = Math.floor((timeRef.gameTime - yearStart) / 86400000);
 
     // 태양 적위 (declination) — 근사식
-    var dec = 23.44 * Math.PI/180 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
+    // 황도경사는 시대에 따라 변한다 (476년 23.64°, 2000년 23.44°)
+    var T = (timeRef.gameTime / 86400000 - 10957.5) / 36525;
+    var dec = (23.439291 - 0.0130042 * T) * Math.PI/180 * Math.sin(2 * Math.PI * (dayOfYear - 81) / 365);
 
     // 로컬 태양시 (경도 보정, 시정차 무시)
     var utcH = d.getUTCHours() + d.getUTCMinutes()/60 + d.getUTCSeconds()/3600;

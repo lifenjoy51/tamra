@@ -35,8 +35,9 @@ export const input = {
 
 // --- UI flags ---
 // K 키 / ★ 버튼 = skyMapOn (하늘보기: 시간 정지 + polar azimuthal 뷰).
-// i 버튼 = debugVisible (디버그 패널 + 미니맵 show/hide. localStorage 로 영속).
-export const uiFlags = { skyMapOn: false, debugVisible: true, render3d: true };
+// i 버튼 = debugVisible (디버그 패널 + 미니맵 show/hide. localStorage 로 영속). 기본 꺼짐 — 좌표·방위·미니맵은
+// "배 위의 사람" 컨셉상 플레이어에게 보이면 안 되는 개발용 정보.
+export const uiFlags = { skyMapOn: false, debugVisible: false, render3d: true };
 
 // --- Wind (풍향) ---
 // 0 = 북, π/2 = 동. 북동풍 = 45° 방향에서 오는 바람
@@ -74,17 +75,19 @@ export const sun = {
     lat: 0, lon: 0,
     altDeg: 45, azDeg: 180,
     altRad: 0, azRad: 0,
-    dayOfYear: 0, hourLocal: 12, month: 1, date: 1, year: 2000,
+    dayOfYear: 0, hourLocal: 12, month: 1, date: 1, year: 476,
 };
 
 // --- Moon state ---
-export const moonState = { altRad: 0, azRad: 0, phase: 0, illumination: 0 };
+// ghaRad: 그리니치 시간각(조석 위상), decRad: 적위
+export const moonState = { altRad: 0, azRad: 0, phase: 0, illumination: 0, ghaRad: 0, decRad: 0 };
 
 // --- 재할당 가능한 스칼라 wrapper ---
 // ES 모듈은 `export let`을 외부에서 reassign 할 수 없으므로 객체 필드로 감싼다.
 export const timeRef = {
-    // 랜덤 날짜(연중 임의) + UTC 정오 기준. 경도는 startGx 주입 후 태양 위치로 자동 보정됨.
-    gameTime: Date.UTC(new Date().getUTCFullYear(), 0, 1 + ((Math.random() * 365) | 0), 3, 0, 0),
+    // 476년(탐라 백제 조공) 의 랜덤 날짜 + UTC 03시(동아시아 정오 무렵). 달력은 역산 그레고리력 —
+    // 별·행성·달은 이 연도 기준 세차·ΔT 로 계산되므로 현대 하늘이 아니다.
+    gameTime: Date.UTC(476, 0, 1 + ((Math.random() * 365) | 0), 3, 0, 0),
     // 시간 가속: 1초 실시간 = TIME_SPEED 초 게임시간. T/Y 키로 조절.
     TIME_SPEED: 120,
 };

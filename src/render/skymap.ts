@@ -5,7 +5,7 @@ import { SCR_W, SCR_H } from '../config';
 import { ctx } from '../canvas';
 import { camera, sun, moonState, uiFlags } from '../state';
 import { SKY_DAY_Z, SKY_DUSK_Z, SKY_NIGHT_Z } from '../sky';
-import { STARS, starState } from '../astronomy/stars';
+import { STARS, starState, skyLimitMag, starVisual } from '../astronomy/stars';
 import { PLANETS, planetState } from '../astronomy/planets';
 
 export function DrawSkyMap() {
@@ -51,8 +51,7 @@ export function DrawSkyMap() {
 
     // 별 (밤 구간에서만, 낮엔 가시성 0)
     if (sun.altDeg < 0) {
-        var nightFade = (-sun.altDeg) / 6;
-        if (nightFade > 1) nightFade = 1;
+        var lim = skyLimitMag();
         for (var si = 0; si < STARS.length; si++) {
             var star = STARS[si];
             var st = starState[si];
@@ -61,13 +60,16 @@ export function DrawSkyMap() {
             var r = (Math.PI / 2 - st.altRad) / (Math.PI / 2) * R;
             var px = cx + Math.sin(dlt) * r;
             var py = cy - Math.cos(dlt) * r;
-            var mag = star.mag, size, alpha;
-            if (mag < 0)      { size = 1.5;  alpha = 1.0;  }
-            else if (mag < 1) { size = 1.25; alpha = 0.95; }
-            else if (mag < 2) { size = 1;    alpha = 0.85; }
-            else if (mag < 3) { size = 0.75; alpha = 0.7;  }
-            else              { size = 0.5;  alpha = 0.55; }
-            alpha *= nightFade;
+            var mag = star.mag, size;
+            var alpha = starVisual(mag, st.altRad, lim);
+            if (alpha < 0.03) continue;
+            if (alpha > 1) alpha = 1;
+            if (mag < 0)      size = 1.5;
+            else if (mag < 1) size = 1.25;
+            else if (mag < 2) size = 1;
+            else if (mag < 3) size = 0.75;
+            else if (mag < 4) size = 0.6;
+            else              size = 0.45;
             ctx.fillStyle = 'rgba(250, 250, 255, ' + alpha + ')';
             ctx.beginPath(); ctx.arc(px, py, size, 0, Math.PI * 2); ctx.fill();
         }

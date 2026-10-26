@@ -51,14 +51,19 @@ export function heliocentric(el, Tdays) {
 
 export function updatePlanets(Tdays, gmstH, latRad, lonDeg) {
     var DEG = Math.PI / 180;
-    var eps = 23.439281 * DEG;
+    var T = Tdays / 36525;
+    var eps = (23.439291 - 0.0130042 * T) * DEG;
+    // 궤도요소가 J2000 황도 기준 → 그 해의 춘분점으로: 황경 일반세차(5029"/세기, 476년 -21.3°) 만큼 회전
+    var pA = (5029.0966 * T + 1.11113 * T * T) / 3600 * DEG;
+    var cP = Math.cos(pA), sP = Math.sin(pA);
     var eh = heliocentric(EARTH, Tdays);
     var lst = gmstH + lonDeg / 15;
     var sinLat = Math.sin(latRad), cosLat = Math.cos(latRad);
     for (var i = 0; i < PLANETS.length; i++) {
         var ph = heliocentric(PLANETS[i], Tdays);
-        var X = ph.x - eh.x;
-        var Y = ph.y - eh.y;
+        var X0 = ph.x - eh.x, Y0 = ph.y - eh.y;
+        var X = X0 * cP - Y0 * sP;
+        var Y = X0 * sP + Y0 * cP;
         var Z = ph.z - eh.z;
         var dist = Math.sqrt(X*X + Y*Y + Z*Z);
         // 황도 → 적도

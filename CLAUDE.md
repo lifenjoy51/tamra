@@ -61,9 +61,9 @@ python3 generate_maps.py
 | `physics/waves.ts` | swell + mid + ripple (wind/current 기반) |
 | `physics/weather.ts` | cloudiness/visibility/precipitation (+ `__cloudOverride`) |
 | `astronomy/sun.ts` | dayOfYear + δ/H → alt/az |
-| `astronomy/stars.ts` | STARS, updateStars(→ planets/moon 호출) |
-| `astronomy/planets.ts` | PLANETS + Meeus J2000 + Kepler |
-| `astronomy/moon.ts` | Meeus 간이식 → λ/β → alt/az + phase |
+| `astronomy/stars.ts` | STARS(`star-catalog.ts` 5.5등급 ~2850개, d3-celestial/Hipparcos), updateStars — 고유운동 + 세차(IAU1976, 연도 바뀔 때 1회) + ΔT(→ planets/moon 호출), `skyLimitMag`/`starVisual`(어스름·달빛·구름 한계등급) |
+| `astronomy/planets.ts` | PLANETS + Meeus J2000 + Kepler, 황경 일반세차로 그 해 춘분점 기준 변환 |
+| `astronomy/moon.ts` | Meeus 간이식 → λ/β → alt/az + phase + 그리니치 시간각(`ghaRad`, 조석 위상) |
 | `sky.ts` | skyRow/skyGlowX/Y/skyGlow + updateSky + cloud mask |
 | `render/voxel.ts` | **HOT PATH** — DrawVerticalLine + Render (bilinear 4-이웃) |
 | `render/background.ts` | DrawBackground (sky/구름/별/행성/달/태양 halo) |
@@ -81,6 +81,7 @@ python3 generate_maps.py
 | `input.ts` | initInput + inputState.{rotStep, moveStep} |
 | `audio.ts` | Web Audio 절차생성 (audio 싱글톤, initAudio/resumeAudio/setMuted/updateAudio/flapBurst/uiBlip) |
 | `debug.ts` | initDebugHooks (window.__* 전부 여기에) |
+| `ui/toggle.ts` | i(디버그 패널+미니맵, **기본 꺼짐** — 좌표·방위는 개발용, `tamra_debug_visible_v2`) / ★ / 櫓 / 音. Time ×2 컨트롤은 플레이어용이라 상시 노출 |
 
 의존성 규칙: `state.ts` 는 zero-import (순수 데이터). 다른 모듈은 state 쪽으로만 흐른다 → 순환 불가. Hot loop (`render/voxel.ts` `Render()`) 은 함수 진입 시 state 프로퍼티를 local 변수로 캐싱 (ESM property access 인라인 유도).
 
@@ -133,7 +134,7 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 | **바람** | `physics/wind.ts` computeWind | Hadley/Ferrel/Polar + ITCZ + 아시아 몬순 + 결정적 noise |
 | **해류** | `physics/current.ts` computeCurrent | 적도류·아열대·편서풍 + 쿠로시오(110~150°E,20~45°N) + 동호주 |
 | **파도** | `physics/waves.ts` computeWaves | swell(←해류) + mid/ripple(←바람), 진폭=wind.speedMS/8 |
-| **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 + GMST → LST → hour angle + 대기 굴절 twinkle |
+| **별** | `STARS`, `starState` 실시간 alt/az, `starTwinkle*` | J2000 → 고유운동·세차(476년) → GMST → LST → hour angle, 한계등급 페이드 + twinkle |
 | **행성** | `PLANETS` (수금화목토천해), `updatePlanets` | Meeus J2000 평균 궤도요소 + Kepler Newton's method |
 | **달** | `updateMoon`, `moonState` 위상·halo | Meeus 간이식 → λ/β. cloudiness > 0.3 시 halo 가산 |
 | **날씨** | `computeWeather` | ITCZ + 중위도 storm + 아열대 고기압 + 노이즈 → cloudiness, visibilityCoef, precipitation(>0.6 임계), precipType(위도 기반 rain/snow) |
@@ -157,7 +158,8 @@ UpdateCamera → DrawBackground(sky glow + 구름 + 별 + 행성 + 달 + 태양)
 
 ### 시간 가속
 
-- `gameTime` (ms 단위), `TIME_SPEED` (초기 120배속)
+- `gameTime` (ms 단위, **476년** 랜덤 날짜 — 역산 그레고리력), `TIME_SPEED` (초기 120배속)
+- 476년 하늘: 세차로 Polaris 는 극에서 9.1° (하룻밤 원을 그림), 극 1.9° 에 5등성 紐星(32 H Cam). 황도경사 23.64°, ΔT ≈ 1.6h
 - 디버그: `window.__advanceHours(h)`, `window.__setTimeSpeed(s)` — 콘솔에서 시간 점프/속도 조작 (검증 편의)
 - T/Y 키로 ÷2/×2 (범위 1~7200). 하늘보기(K) 켜진 동안 시간 정지.
 

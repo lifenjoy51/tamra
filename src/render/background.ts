@@ -8,7 +8,7 @@ import {
     skyRow, skyGlowX, skyGlowY, skyGlow,
     cloudFull, CLOUD_FULL_H, cloudAlphaAt,
 } from '../sky';
-import { STARS, starState, starTwinklePhase, starTwinkleFreq } from '../astronomy/stars';
+import { STARS, starState, starTwinklePhase, starTwinkleFreq, skyLimitMag, starVisual } from '../astronomy/stars';
 import { PLANETS, planetState } from '../astronomy/planets';
 import { PX_PER_RAD_H } from './voxel';
 
@@ -67,10 +67,7 @@ export function DrawBackground() {
 
     // --- Stars ---
     if (sun.altDeg < 0) {
-        var darkness = (-sun.altDeg) / 12;
-        if (darkness > 1) darkness = 1;
-        darkness *= (1 - weather.cloudiness * 0.8);
-
+        var starLim = skyLimitMag();
         var twT = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
         for (var si = 0; si < STARS.length; si++) {
             var star = STARS[si];
@@ -84,14 +81,13 @@ export function DrawBackground() {
             if (sxs < 0 || sxs >= SCR_W || sys < 0 || sys >= SCR_H) continue;
             var sCov = cloudAlphaAt(sxs, sys, horizonY);
             if (sCov > 0.55) continue;
-            var magBright = (4.0 - star.mag) / 3.5;
-            if (magBright < 0.3) magBright = 0.3;
-            else if (magBright > 1.2) magBright = 1.2;
+            var magBright = starVisual(star.mag, st.altRad, starLim);
+            if (magBright < 0.03) continue;
             var altDegSt = st.altRad * 57.2958;
             var twAmp = 0.18 + (altDegSt < 15 ? (15 - altDegSt) / 15 * 0.35 : 0);
             if (twAmp > 0.5) twAmp = 0.5;
             var twMod = 1 + twAmp * Math.sin(twT * starTwinkleFreq[si] + starTwinklePhase[si]);
-            var alpha = darkness * magBright * twMod;
+            var alpha = magBright * twMod;
             var blendPx = function (lx, ly, a) {
                 if (lx < 0 || lx >= SCR_W || ly < 0 || ly >= SCR_H) return;
                 if (a > 1) a = 1;

@@ -3,7 +3,7 @@
 // y = sin(alt). (az: 0=북, 시계방향 증가 — boat.angle/wind 와 동일 좌표계)
 import * as THREE from 'three';
 import { sun, moonState, weather } from '../state';
-import { STARS, starState } from '../astronomy/stars';
+import { STARS, starState, skyLimitMag, starVisual, starTint } from '../astronomy/stars';
 import { PLANETS, planetState } from '../astronomy/planets';
 
 const SKY_R = 1800;
@@ -20,12 +20,17 @@ export function dirFromAltAz(altRad: number, azRad: number): THREE.Vector3 {
     );
 }
 
+// 등급별 점 크기 버킷 (PointsMaterial 은 크기 하나) — 밝은 별 4px, 중간 3px, 희미한 별 2px
+interface StarBucket { points: THREE.Points; idx: Int32Array; }
+const STAR_BUCKETS = [{ maxMag: 1.5, size: 4 }, { maxMag: 3.5, size: 3 }, { maxMag: 99, size: 2 }];
+const tint = [1, 1, 1];
+
 export interface CelestialRig {
     sunLight: THREE.DirectionalLight;
     ambient: THREE.AmbientLight;
     sunSprite: THREE.Sprite;
     moonSprite: THREE.Sprite;
-    starPoints: THREE.Points;
+    starBuckets: StarBucket[];
     planetPoints: THREE.Points;
 }
 
@@ -62,13 +67,22 @@ export function buildCelestialRig(scene: THREE.Scene): CelestialRig {
     moonSprite.scale.set(60, 60, 1);
     scene.add(moonSprite);
 
-    var starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(STARS.length * 3), 3));
-    starGeo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(STARS.length * 3), 3));
-    // fog: false — 천구 반경(SKY_R=1800)이 Fog far(1900) 근처라 fog 적용 시 수평선색에 묻혀 안 보인다.
-    var starMat = new THREE.PointsMaterial({ size: 4, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: false, fog: false });
-    var starPoints = new THREE.Points(starGeo, starMat);
-    scene.add(starPoints);
+    var starBuckets: StarBucket[] = [];
+    var lo = -99;
+    for (var bi = 0; bi < STAR_BUCKETS.length; bi++) {
+        var bk = STAR_BUCKETS[bi], ids: number[] = [];
+        for (var si = 0; si < STARS.length; si++) if (STARS[si].mag > lo && STARS[si].mag <= bk.maxMag) ids.push(si);
+        lo = bk.maxMag;
+        var starGeo = new THREE.BufferGeometry();
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(ids.length * 3), 3));
+        starGeo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(ids.length * 3), 3));
+        // fog: false — 천구 반경(SKY_R=1800)이 Fog far(1900) 근처라 fog 적용 시 수평선색에 묻혀 안 보인다.
+        var starMat = new THREE.PointsMaterial({ size: bk.size, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: false, fog: false });
+        var pts = new THREE.Points(starGeo, starMat);
+        pts.frustumCulled = false;
+        scene.add(pts);
+        starBuckets.push({ points: pts, idx: Int32Array.from(ids) });
+    }
 
     var planetGeo = new THREE.BufferGeometry();
     planetGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(PLANETS.length * 3), 3));
@@ -77,7 +91,7 @@ export function buildCelestialRig(scene: THREE.Scene): CelestialRig {
     var planetPoints = new THREE.Points(planetGeo, planetMat);
     scene.add(planetPoints);
 
-    return { sunLight, ambient, sunSprite, moonSprite, starPoints, planetPoints };
+    return { sunLight, ambient, sunSprite, moonSprite, starBuckets, planetPoints };
 }
 
 export function updateCelestialRig(rig: CelestialRig, camPos: THREE.Vector3) {
@@ -120,18 +134,21 @@ export function updateCelestialRig(rig: CelestialRig, camPos: THREE.Vector3) {
         rig.moonSprite.visible = false;
     }
 
-    var starPos = rig.starPoints.geometry.attributes.position as THREE.BufferAttribute;
-    var starCol = rig.starPoints.geometry.attributes.color as THREE.BufferAttribute;
-    var starVis = night;
-    rig.starPoints.visible = starVis;
-    if (starVis) {
-        var darkness = Math.min(1, -sun.altDeg / 12);
-        for (var i = 0; i < STARS.length; i++) {
-            var st = starState[i];
-            var d = dirFromAltAz(st.altRad, st.azRad);
-            starPos.setXYZ(i, camPos.x + d.x * SKY_R, camPos.y + d.y * SKY_R, camPos.z + d.z * SKY_R);
-            var vis = st.altRad > 0 ? darkness * Math.max(0.3, (4 - STARS[i].mag) / 3.5) : 0;
-            starCol.setXYZ(i, vis, vis, vis);
+    var lim = skyLimitMag();
+    var starVis = night && lim > -1;
+    for (var bi = 0; bi < rig.starBuckets.length; bi++) {
+        var bk = rig.starBuckets[bi];
+        bk.points.visible = starVis;
+        if (!starVis) continue;
+        var starPos = bk.points.geometry.attributes.position as THREE.BufferAttribute;
+        var starCol = bk.points.geometry.attributes.color as THREE.BufferAttribute;
+        for (var k = 0; k < bk.idx.length; k++) {
+            var i = bk.idx[k], st = starState[i];
+            var ca = Math.cos(st.altRad);
+            starPos.setXYZ(k, camPos.x + Math.sin(st.azRad) * ca * SKY_R, camPos.y + Math.sin(st.altRad) * SKY_R, camPos.z - Math.cos(st.azRad) * ca * SKY_R);
+            var vis = starVisual(STARS[i].mag, st.altRad, lim);
+            starTint(STARS[i].bv, tint);
+            starCol.setXYZ(k, vis * tint[0], vis * tint[1], vis * tint[2]);
         }
         starPos.needsUpdate = true;
         starCol.needsUpdate = true;

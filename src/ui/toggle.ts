@@ -7,7 +7,8 @@ import { uiFlags, boat } from '../state';
 import { uiBlip } from '../audio';
 import { audio, setMuted } from '../audio';
 
-const LS_KEY_DEBUG = 'tamra_debug_visible';
+// 키 이름을 바꿔 예전 '켜짐' 저장값을 무시 — 기본 꺼짐이 한 번은 적용되게.
+const LS_KEY_DEBUG = 'tamra_debug_visible_v2';
 
 let btnSky: HTMLButtonElement | null = null;
 let btnRow: HTMLButtonElement | null = null;
@@ -18,7 +19,7 @@ let debugEl: HTMLElement | null = null;
 function applyDebug() {
     if (debugEl) debugEl.style.display = uiFlags.debugVisible ? 'block' : 'none';
     if (btnDebug) btnDebug.classList.toggle('active', uiFlags.debugVisible);
-    // 디버그 열림일 때만 toggle-ui 에 debug-on 클래스 → Time/Map 인라인 컨트롤 노출
+    // 디버그 열림일 때만 toggle-ui 에 debug-on 클래스 → Map 인라인 컨트롤 노출 (Time 은 상시)
     const togglePanel = document.getElementById('toggle-ui');
     if (togglePanel) togglePanel.classList.toggle('debug-on', uiFlags.debugVisible);
 }
@@ -33,7 +34,7 @@ export function initToggleUI() {
     btnDebug = document.getElementById('btn-debug') as HTMLButtonElement | null;
     debugEl = document.getElementById('debug');
 
-    // 디버그 패널 이전 상태 복원 — 저장된 값 없으면 기본 visible.
+    // 디버그 패널 이전 상태 복원 — 저장된 값 없으면 기본 숨김.
     const saved = localStorage.getItem(LS_KEY_DEBUG);
     if (saved !== null) uiFlags.debugVisible = saved === '1';
     applyDebug();

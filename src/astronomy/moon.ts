@@ -21,7 +21,7 @@ export function updateMoon(Tdays, gmstH, latRad, lonDeg) {
         + 0.281 * DEG * Math.sin(Mp + F)
         - 0.278 * DEG * Math.sin(F - Mp)
         - 0.173 * DEG * Math.sin(F - 2 * D);
-    var eps = 23.439281 * DEG;
+    var eps = (23.439291 - 0.0130042 * T) * DEG;   // 그 시대 황도경사 (476년 23.64°)
     var cosL = Math.cos(lambda), sinL = Math.sin(lambda);
     var cosB = Math.cos(beta), sinB = Math.sin(beta);
     var x = cosL * cosB;
@@ -33,6 +33,9 @@ export function updateMoon(Tdays, gmstH, latRad, lonDeg) {
     var raH = raRad * 12 / Math.PI;
     var lst = gmstH + lonDeg / 15;
     var H = (lst - raH) * 15 * DEG;
+    // 그리니치 시간각 — 조석(M2) 위상 기준
+    moonState.ghaRad = ((gmstH - raH) * 15 * DEG) % (2 * Math.PI);
+    moonState.decRad = decRad;
     var sinLat = Math.sin(latRad), cosLat = Math.cos(latRad);
     var sinDec = Math.sin(decRad), cosDec = Math.cos(decRad);
     var sinH = Math.sin(H), cosH = Math.cos(H);
